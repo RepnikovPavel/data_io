@@ -1,11 +1,14 @@
 FROM python:3.12-slim
 
-# Install the Hugging Face CLI
-RUN pip install --no-cache-dir "huggingface_hub[cli]"
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    wget \
+    curl \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set a working directory inside the container
+RUN pip install --no-cache-dir "huggingface_hub[cli]" gdown hf_transfer
+
 WORKDIR /workspace
 
-# Run your download command when the container starts
-# Note: /workspace/FLAN is used as the target inside the container
-CMD ["hf", "download", "Open-Orca/FLAN", "--repo-type", "dataset", "--local-dir", "/workspace/FLAN"]
+CMD ["sleep", "infinity"]
