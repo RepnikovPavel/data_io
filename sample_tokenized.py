@@ -101,6 +101,7 @@ def concat_tokens(tasks: list[Task], config: Config, tokenizer_info: dict[str, A
 
     vocab_size = tokenizer_info.get("vocab_size")
     if vocab_size is not None:
+        # TODO: may be this? np.iinfo(np.uint8).max+1 and np.iinfo(np.uint16).max+1
         if vocab_size <= np.iinfo(np.uint8).max:
             target_dtype = np.uint8
         elif vocab_size <= np.iinfo(np.uint16).max:
