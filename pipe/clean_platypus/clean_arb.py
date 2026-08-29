@@ -1,7 +1,13 @@
 import os
 import orjson
 
-from utils import write_jsonl
+def write_jsonl(filename, data):
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+    with open(filename, "wb") as f:
+        for item in data:
+            f.write(orjson.dumps(item))
+            f.write(b"\n")
 
 
 DATA_PATH = "raw_data/Platypus/ARB"
@@ -18,6 +24,12 @@ for filename, (description, condition) in DESCRIPTION_MAP.items():
     with open(os.path.join(DATA_PATH, filename), "rb") as f:
         data = orjson.loads(f.read())
 
-    data = [{"instruction": f"{description}\n\n{x['instruction']}", "response": x["response"], "condition": condition} for x in data]
+    data = [
+        {
+            "instruction": f"{description}\n\n{x['instruction']}", 
+            "response": x["response"], 
+            "condition": condition
+        } for x in data
+    ]
 
     write_jsonl(f"data/Platypus/arb_{filename}l", data)
