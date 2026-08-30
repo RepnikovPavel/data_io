@@ -8,6 +8,12 @@ nohup ./scripts/download_data.sh /mnt/hdd2/datasets_text > /tmp/hrm_text_downloa
 
 Один датасет отдельно (отладка/перезапуск): `./scripts/download_hf.sh REPO_ID [DATASETS_DIR] [LOCAL_SUBDIR]`, специальные: `download_amps.sh`, `download_scibench.sh`, `download_math_dataset.sh`. Лог каждого: `/tmp/hrm_text_download_<name>.log`.
 
+## Train tokenizer
+
+```bash
+nohup ./scripts/train_tokenizer.sh /mnt/hdd2/datasets_text_transformed/HRM-Text /mnt/hdd2/models/HRM-Text/tokenizers/original/bpe > /tmp/hrm_text_train_tokenizer.log 2>&1 &
+```
+
 ## Clean (всё по очереди)
 
 ```bash
@@ -18,7 +24,7 @@ nohup ./scripts/run_clean_all.sh /mnt/hdd2/datasets_text /mnt/hdd2/datasets_text
 
 ```bash
 nohup ./scripts/clean_flan.sh /mnt/hdd2/datasets_text/Open-Orca/FLAN /mnt/hdd2/datasets_text_transformed/HRM-Text/data_clustered/flan > /tmp/hrm_text_clean_flan.log 2>&1 &
-nohup ./scripts/clean_synth.sh /mnt/hdd2/datasets_text/PleIAs/SYNTH /mnt/hdd2/datasets_text_transformed/HRM-Text/data_clustered/synth > /tmp/hrm_text_clean_synth.log 2>&1 &
+nohup ./scripts/clean_synth.sh /mnt/hdd2/datasets_text/PleIAs/SYNTH /mnt/hdd2/datasets_text_transformed/HRM-Text/data_clustered/SYNTH > /tmp/hrm_text_clean_synth.log 2>&1 &
 nohup ./scripts/clean_acereason.sh /mnt/hdd2/datasets_text /mnt/hdd2/datasets_text_transformed/HRM-Text/data_clustered/acereason > /tmp/hrm_text_clean_acereason.log 2>&1 &
 nohup ./scripts/clean_ampsmathematica.sh /mnt/hdd2/datasets_text/amps.tar.gz /mnt/hdd2/datasets_text_transformed/HRM-Text/data_clustered/ampsmathematica > /tmp/hrm_text_clean_ampsmathematica.log 2>&1 &
 nohup ./scripts/clean_dmmath.sh /mnt/hdd2/datasets_text/mathematics_dataset-v1.0 /mnt/hdd2/datasets_text_transformed/HRM-Text/data_clustered/dmmath > /tmp/hrm_text_clean_dmmath.log 2>&1 &

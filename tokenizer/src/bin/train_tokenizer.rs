@@ -8,7 +8,10 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
-use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Instant;
+use indicatif::{ParallelProgressIterator, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rand_pcg::rand_core::SeedableRng;
 use tokenizers::models::bpe::{BPE, BpeTrainer};
 use tokenizers::models::unigram::{Unigram, UnigramTrainer};
@@ -90,8 +93,38 @@ fn main() -> Result<()> {
     // Load data
     println!("Scanning and loading data...");
     let files = scan_inputs(&args.dirs)?;
-    let pb = ProgressBar::new(files.len() as u64);
+    let n_files = files.len();
+    println!("Found {} input files", n_files);
+
+    // Counters for log-friendly progress (indicatif bars are invisible in
+    // non-tty logs, so emit explicit progress lines every 15s).
+    let files_done = Arc::new(AtomicUsize::new(0));
+    let docs_loaded = Arc::new(AtomicUsize::new(0));
+    let stop_monitor = Arc::new(AtomicBool::new(false));
+    {
+        let files_done = files_done.clone();
+        let docs_loaded = docs_loaded.clone();
+        let stop = stop_monitor.clone();
+        std::thread::spawn(move || {
+            let t0 = Instant::now();
+            while !stop.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_secs(15));
+                let done = files_done.load(Ordering::Relaxed);
+                let docs = docs_loaded.load(Ordering::Relaxed);
+                let mins = t0.elapsed().as_secs_f64() / 60.0;
+                let eta = if done > 0 {
+                    mins * (n_files - done) as f64 / done as f64
+                } else { f64::NAN };
+                println!("[load] {}/{} files, {} docs, elapsed {:.1} min, ETA {:.1} min",
+                         done, n_files, docs, mins, eta);
+            }
+        });
+    }
+
+    let pb = ProgressBar::new(n_files as u64);
+    pb.set_draw_target(ProgressDrawTarget::stderr_with_hz(2));
     pb.set_style(ProgressStyle::default_bar().template("{spinner:.green} {msg} {bar:40} {pos}/{len} {elapsed} ETA {eta}")?);
+    let load_started = Instant::now();
 
     let all_documents: Vec<String> = files.into_par_iter().progress_with(pb).filter_map(|f| {
         let mut local_docs = Vec::new();
@@ -117,11 +150,32 @@ fn main() -> Result<()> {
                 local_docs.truncate(limit);
             }
         }
+        docs_loaded.fetch_add(local_docs.len(), Ordering::Relaxed);
+        files_done.fetch_add(1, Ordering::Relaxed);
         Some(local_docs)
     }).flatten().collect();
 
+    stop_monitor.store(true, Ordering::Relaxed);
+    let load_secs = load_started.elapsed().as_secs_f64();
+    let total_bytes: usize = all_documents.iter().map(|s| s.len()).sum();
+    println!("[load] done: {} files, {} documents, {:.1} GiB text in {:.1} min",
+             n_files, all_documents.len(), total_bytes as f64 / 2f64.powi(30), load_secs / 60.0);
+
     // Train
-    println!("Training on {} documents...", all_documents.len());
+    println!("[train] starting {} training (vocab_size={}) on {} documents...",
+             args.tokenizer_type, args.vocab_size, all_documents.len());
+    let train_started = Instant::now();
+    let stop_heartbeat = Arc::new(AtomicBool::new(false));
+    {
+        let stop = stop_heartbeat.clone();
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_secs(60));
+                println!("[train] in progress, elapsed {:.1} min",
+                         train_started.elapsed().as_secs_f64() / 60.0);
+            }
+        });
+    }
 
     let create_byte_level = || { ByteLevel::default().add_prefix_space(false).trim_offsets(false).use_regex(false) };
     let create_pre_tokenizer = || { Sequence::new(vec![
@@ -194,6 +248,10 @@ fn main() -> Result<()> {
             return Err(Error::msg(format!("Unsupported tokenizer type: {}.", other)));
         }
     }
+
+    stop_heartbeat.store(true, Ordering::Relaxed);
+    println!("[train] done in {:.1} min -> {:?}",
+             train_started.elapsed().as_secs_f64() / 60.0, args.out);
 
     Ok(())
 }

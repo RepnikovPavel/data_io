@@ -1115,7 +1115,7 @@ REGISTRY = [
                         "glob": f"{D}/PleIAs/SYNTH/*.parquet",
                         "fields": ["query", "constraints", "synthetic_answer",
                                    "exercise", "language", "query_seed_url"]},
-        "outputs": ["data_clustered/synth/*.parquet"],
+        "outputs": ["data_clustered/SYNTH/*.parquet"],
         "out_format": "parquet",
         "conditions": {
             "synth,cot": ("creative writing / rag / memorization / constrained writing / editing",

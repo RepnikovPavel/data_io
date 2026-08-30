@@ -88,8 +88,8 @@ def main():
         help='absolute path to raw SYNTH parquet files')
     parser.add_argument(
         '--output_path', type=str,
-        default='/mnt/hdd2/datasets_text_transformed/HRM-Text/data_clustered/synth',
-        help='absolute path to data_clustered/synth')
+        default='/mnt/hdd2/datasets_text_transformed/HRM-Text/data_clustered/SYNTH',
+        help='absolute path to data_clustered/SYNTH')
     parser.add_argument(
         '--workers', type=int, default=min(8, os.cpu_count() or 1),
         help='number of files processed in parallel (default: min(8, cpu_count))')

@@ -3,7 +3,7 @@
 set -e
 
 INPUT_DIR="${1:-/mnt/hdd2/datasets_text/PleIAs/SYNTH}"
-OUTPUT_DIR="${2:-/mnt/hdd2/datasets_text_transformed/HRM-Text/data_clustered/synth}"
+OUTPUT_DIR="${2:-/mnt/hdd2/datasets_text_transformed/HRM-Text/data_clustered/SYNTH}"
 WORKERS="${3:-4}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
