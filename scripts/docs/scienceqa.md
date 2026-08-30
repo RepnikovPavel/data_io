@@ -8,6 +8,8 @@
 
 ScienceQA (text-only subset): grade-school science MCQs with lectures and rationales. Rows with a rationale yield a cot record (rationale + answer letter); every row also yields a direct record (bare letter). A lecture, when present, is appended to the instruction.
 
+Created: 2022-09 · Domain: grade-school science MCQ _(date source: ScienceQA paper (NeurIPS 2022), arXiv:2209.09513)_
+
 ## Before (raw storage)
 
 - Source: HF `metaeval/ScienceQA_text_only` (splits `train`+`validation`+`test`)

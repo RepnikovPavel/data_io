@@ -8,6 +8,8 @@
 
 tasksource-instruct-v0: 5.3M instruction examples recast from 485 curated HF datasets (mostly discriminative: NLI, classification, tagging, MCQ), capped at 30k rows per task. The transform keeps a curated ~180-task subset and writes one parquet per task.
 
+Created: 2023-05 · Domain: multi-task NLP (classification/NLI/MCQ) _(date source: tasksource-instruct-v0 HF release (repo createdAt 2023-05))_
+
 ## Before (raw storage)
 
 - Source: HF `tasksource/tasksource-instruct-v0` (split `train`)

@@ -8,6 +8,8 @@
 
 MATH (Hendrycks): 12.5k competition problems in 7 subjects with LaTeX worked solutions (train splits used here). Each problem yields the full solution (cot) plus the last `\boxed{...}` content as a bare answer (direct).
 
+Created: 2021-03 · Domain: competition math _(date source: MATH paper, arXiv:2103.03874)_
+
 ## Before (raw storage)
 
 - Source: HF `EleutherAI/hendrycks_math` (7 subject configs, split `train`)

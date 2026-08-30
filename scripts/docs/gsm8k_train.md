@@ -8,6 +8,8 @@
 
 GSM8K (OpenAI): 7,473 crowdsourced grade-school math word problems (train split; the socratic config is unused). Raw answers embed calculator annotations `<<...>>` and end in `#### <final>`; the transform keeps only the final answer, teaching terse numeric answers to word problems.
 
+Created: 2021-10 · Domain: math word problems _(date source: GSM8K paper, arXiv:2110.14168)_
+
 ## Before (raw storage)
 
 - Source: HF `openai/gsm8k` (config `main`, split `train`)

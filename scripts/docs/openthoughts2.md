@@ -8,6 +8,8 @@
 
 OpenThoughts2-1M: 1.1M synthetic reasoning traces (math, science, code, puzzles) with R1-style `<think>` blocks. The transform drops code-related sources and code-looking rows, strips the think block, and keeps the remaining answer.
 
+Created: 2025-04 · Domain: synthetic reasoning traces _(date source: OpenThoughts2 release (blog 'thinkagain', 2025-04))_
+
 ## Before (raw storage)
 
 - Source: HF `open-thoughts/OpenThoughts2-1M` (split `train`)

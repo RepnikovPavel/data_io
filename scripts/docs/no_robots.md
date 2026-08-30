@@ -8,6 +8,8 @@
 
 No Robots (HuggingFace): 10k instructions written by human annotators (not GPT), modelled after InstructGPT, across 10 categories (Generation, Open QA, ...). Only the first user->assistant turn is kept (system prompt prepended).
 
+Created: 2023-11 · Domain: general instruction following (human-written) _(date source: HF release (repo createdAt 2023-11))_
+
 ## Before (raw storage)
 
 - Source: HF `HuggingFaceH4/no_robots` (splits `train`+`test`)

@@ -8,6 +8,8 @@
 
 ARB: an advanced reasoning benchmark with graduate-level problems in math, physics, science, reading and law (distributed with Platypus, one JSON file per subject). The transform prepends a fixed task description per subject and tags law as direct (option letter), the rest as cot.
 
+Created: 2023-07 · Domain: advanced reasoning (graduate STEM/law/reading) _(date source: ARB paper, arXiv:2307.13692)_
+
 ## Before (raw storage)
 
 - Source: `/mnt/hdd2/datasets_text/Platypus/ARB/*.json` (5 subject files)

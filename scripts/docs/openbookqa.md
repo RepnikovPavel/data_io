@@ -8,6 +8,8 @@
 
 OpenBookQA: ~6k elementary science multiple-choice questions ('additional' config, which adds the supporting fact1). Question, options and fact are rendered into one instruction; the response is the option letter.
 
+Created: 2018-09 · Domain: elementary science MCQ _(date source: OpenBookQA paper (EMNLP 2018), arXiv:1809.02789)_
+
 ## Before (raw storage)
 
 - Source: HF `allenai/openbookqa` (config `additional`, splits `train`+`validation`)

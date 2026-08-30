@@ -8,6 +8,8 @@
 
 NuminaMath 1.5: ~900k competition-level math problems with CoT solutions, sourced from Chinese high-school exercises to international olympiads. The transform drops synthetic rows, invalid problems/solutions, and URL/translation artifacts; kept rows yield the full solution plus, for non-proofs, the short answer.
 
+Created: 2025-02 · Domain: competition math _(date source: NuminaMath-1.5 release (repo createdAt 2025-02))_
+
 ## Before (raw storage)
 
 - Source: HF `AI-MO/NuminaMath-1.5` (split `train`)

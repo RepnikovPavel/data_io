@@ -8,6 +8,8 @@
 
 Khan Academy exercises from the AMPS dataset (Hendrycks et al.) — one JSON file per problem. The step hints are joined into the response; hint quality varies, hence noisy.
 
+Created: 2021-03 · Domain: math exercises (Khan Academy) _(date source: AMPS, released with the MATH paper, arXiv:2103.03874)_
+
 ## Before (raw storage)
 
 - Source: `/mnt/hdd2/datasets_text/amps/khan/**/*.json` (extracted from `/mnt/hdd2/datasets_text/amps.tar.gz`)

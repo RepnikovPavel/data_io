@@ -8,6 +8,8 @@
 
 Principia Collection (Meta): ~550k synthetic STEM problems (proposed by GPT-OSS-120B) over PhySH/MSC-2020 topics, in two splits: `mathematical_object` (derive an equation/expression) and `numerical` (numeric answer). Loaded verbatim as question->answer pairs.
 
+Created: 2025-11 · Domain: synthetic STEM problems _(date source: HF release (repo createdAt 2025-11; paper pending per card))_
+
 ## Before (raw storage)
 
 - Source: HF `facebook/principia-collection` (splits `mathematical_object`+`numerical`)

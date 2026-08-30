@@ -8,6 +8,8 @@
 
 WebInstruct-verified (TIGER-Lab, General-Reasoner project): ~230k web-mined questions across many domains whose answers were verified for correctness/verifiability. Loaded verbatim as direct QA pairs.
 
+Created: 2025-05 · Domain: web-mined QA (multi-domain) _(date source: General-Reasoner paper, arXiv:2505.14652)_
+
 ## Before (raw storage)
 
 - Source: HF `TIGER-Lab/WebInstruct-verified` (split `train`)

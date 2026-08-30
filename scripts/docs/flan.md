@@ -8,6 +8,8 @@
 
 FLAN v2 instruction-tuning collection (Open-Orca parquet dump): templated tasks from the Flan/T0/NIV2/CoT/dialog submixtures, in few-shot/zero-shot and with/without-options variants. 14 subsets are included; each output parquet holds one (subset, task) pair.
 
+Created: 2023-01 · Domain: instruction-tuning mixture _(date source: FLAN v2 collection, arXiv:2301.13688 (Open-Orca parquet dump, 2023-07))_
+
 ## Before (raw storage)
 
 - Source: `/mnt/hdd2/datasets_text/Open-Orca/FLAN/<subset>/*.parquet`

@@ -8,6 +8,8 @@
 
 SciBench: college-level scientific problems from textbook JSON files (physics, chemistry, math; `*_sol.json` files carry worked solutions). The transform emits the worked solution when present (cot) and always the final numeric answer (direct).
 
+Created: 2023-07 · Domain: college-level science problems _(date source: SciBench paper, arXiv:2307.10635)_
+
 ## Before (raw storage)
 
 - Source: `/mnt/hdd2/datasets_text/Platypus/scibench/dataset/original/*.json`

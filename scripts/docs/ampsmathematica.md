@@ -8,6 +8,8 @@
 
 AMPS Mathematica: machine-generated math exercises with Mathematica-produced answers, read straight from the tar archive. Files under a `*_w_steps` task folder carry step-by-step answers (cot), the rest final answers (direct); output is grouped one parquet per topic_subtask.
 
+Created: 2021-03 · Domain: synthetic math exercises (Mathematica) _(date source: AMPS, released with the MATH paper, arXiv:2103.03874)_
+
 ## Before (raw storage)
 
 - Source: `/mnt/hdd2/datasets_text/amps.tar.gz` (members `amps/mathematica/<topic>/<task>/*.txt`)

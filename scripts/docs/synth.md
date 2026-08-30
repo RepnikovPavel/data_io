@@ -8,6 +8,8 @@
 
 SYNTH (PleIAs): ~80M synthetic samples amplified from ~59k Wikipedia 'vital articles', with model-written reasoning traces; ~20% non-English. The transform keeps English only, drops self-knowledge queries and cooking exercises, and derives the condition tag from the exercise type.
 
+Created: 2025-04 · Domain: synthetic general knowledge (Wikipedia-derived) _(date source: PleIAs SYNTH release (blog announcement 2025-04))_
+
 ## Before (raw storage)
 
 - Source: `/mnt/hdd2/datasets_text/PleIAs/SYNTH/*.parquet`

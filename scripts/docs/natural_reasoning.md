@@ -8,6 +8,8 @@
 
 NaturalReasoning (Meta): 1.1M challenging reasoning questions backtranslated from DCLM/FineMath pretraining corpora, deduplicated and decontaminated against MATH/GPQA/MMLU. The transform keeps the reference answer extracted from the source document (rows with empty answers or proof-style questions are dropped).
 
+Created: 2025-02 · Domain: web-derived reasoning QA _(date source: NaturalReasoning paper, arXiv:2502.13124)_
+
 ## Before (raw storage)
 
 - Source: HF `facebook/natural_reasoning` (split `train`)

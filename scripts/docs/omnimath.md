@@ -8,6 +8,8 @@
 
 Omni-MATH: 4,428 olympiad-level problems spanning 33 sub-domains and 10 difficulty levels, published as a benchmark — here the test split is reused as training data. Each problem yields the full solution (cot) and the short final answer (direct).
 
+Created: 2024-10 · Domain: olympiad math _(date source: Omni-MATH paper, arXiv:2410.07985)_
+
 ## Before (raw storage)
 
 - Source: HF `KbsdJames/Omni-MATH` (split `test`)

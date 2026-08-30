@@ -8,6 +8,8 @@
 
 ReClor: logical-reasoning reading comprehension MCQs from LSAT/GMAT preparation material. Context, question and options are rendered into one instruction; the response is the option letter.
 
+Created: 2020-02 · Domain: logical reasoning MCQ _(date source: ReClor paper (ICLR 2020), arXiv:2002.04326)_
+
 ## Before (raw storage)
 
 - Source: HF `metaeval/reclor` (splits `train`+`validation`)

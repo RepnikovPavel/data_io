@@ -8,6 +8,8 @@
 
 TheoremQA: 800 expert-curated university-level questions driven by 350+ STEM theorems (math, EE&CS, physics, finance). Rows containing a picture are dropped; the rest become direct question->answer pairs.
 
+Created: 2023-05 · Domain: university STEM theorem QA _(date source: TheoremQA paper, arXiv:2305.12524)_
+
 ## Before (raw storage)
 
 - Source: HF `TIGER-Lab/TheoremQA` (split `test`)

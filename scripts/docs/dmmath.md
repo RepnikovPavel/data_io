@@ -8,6 +8,8 @@
 
 DeepMind mathematics_dataset-v1.0: procedurally generated school math over ~120 task types, split into train-easy/medium/hard tiers for curriculum training. Each .txt holds alternating question/answer lines; one output parquet per (tier, task).
 
+Created: 2019-04 · Domain: procedural school math _(date source: DeepMind mathematics_dataset paper, arXiv:1904.01557)_
+
 ## Before (raw storage)
 
 - Source: `/mnt/hdd2/datasets_text/mathematics_dataset-v1.0/{train-easy,train-medium,train-hard}/*.txt`

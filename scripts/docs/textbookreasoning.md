@@ -8,6 +8,8 @@
 
 TextbookReasoning (MegaScience): 650k questions with truthful reference answers extracted from 12k university textbooks across 7 scientific disciplines. Every row goes to cot.parquet (full answer); non-proof rows also go to direct.parquet (short reference answer).
 
+Created: 2025-07 · Domain: textbook science QA _(date source: MegaScience paper, arXiv:2507.16812)_
+
 ## Before (raw storage)
 
 - Source: HF `MegaScience/TextbookReasoning` (split `train`)

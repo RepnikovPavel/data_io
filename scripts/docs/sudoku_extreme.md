@@ -8,6 +8,8 @@
 
 sudoku-extreme (Sapient): 3.8M training puzzles mixing easy sets with the hardest community-collected ones; exact-deduped, unique solutions. The puzzle string ('.' -> '0') gets a fixed 'Solve the Sudoku' prefix; the response is the solved 81-char grid. Teaches long-horizon constraint reasoning.
 
+Created: 2024-10 · Domain: logic puzzles (sudoku) _(date source: HF release (repo createdAt 2024-10; Sapient))_
+
 ## Before (raw storage)
 
 - Source: HF `sapientinc/sudoku-extreme` (file `train.csv`)
