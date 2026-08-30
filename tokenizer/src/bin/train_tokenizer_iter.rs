@@ -850,8 +850,23 @@ fn init_train_state(args: &TrainArgs) -> Result<TrainState> {
         .collect();
 
     // Resume from the latest merges checkpoint if present.
+    //
+    // Queue-eligibility subtlety: the reference only ever queues a pair if it
+    // had a positive (i32) count at init or received a positive change from
+    // some merge. Pairs of two INITIAL tokens can never be created by a merge
+    // (positive changes always involve the new token), so a pair that was
+    // non-positive at init (i32 overflow) stays out of the queue forever. To
+    // resume identically, count pairs on the PRE-REPLAY state and treat as
+    // eligible: pairs positive at init, plus any pair involving a merged
+    // token (id >= n_initial).
+    let resume_ckpt = latest_merges_checkpoint(&args.checkpoint_dir)?;
+    let mut eligible_at_init: Option<HashSet<Pair>> = None;
+    if resume_ckpt.is_some() {
+        let (pc0, _) = count_pairs(&words);
+        eligible_at_init = Some(pc0.into_iter().filter(|&(_, c)| c > 0).map(|(p, _)| p).collect());
+    }
     let mut merges: Vec<(u32, u32)> = Vec::new();
-    if let Some((n, path)) = latest_merges_checkpoint(&args.checkpoint_dir)? {
+    if let Some((n, path)) = resume_ckpt {
         let (ckpt_vocab, ckpt_merges) = read_merges_checkpoint(&path)?;
         if ckpt_vocab.len() < n_initial || ckpt_vocab[..n_initial] != vocab_bytes[..] {
             bail!(
@@ -909,12 +924,21 @@ fn init_train_state(args: &TrainArgs) -> Result<TrainState> {
     for (&pair, &count) in &pair_counts {
         // The reference queues only pairs with a positive (i32) count; the
         // queued value is `count as u64` (sign-extended).
-        if count > 0 {
-            heap.push(QEntry {
-                count: count as u64,
-                pair,
-            });
+        if count <= 0 {
+            continue;
         }
+        if let Some(eligible) = &eligible_at_init {
+            // Resume: keep the run's admission rule (see above).
+            let involves_merged =
+                pair.0 as usize >= n_initial || pair.1 as usize >= n_initial;
+            if !involves_merged && !eligible.contains(&pair) {
+                continue;
+            }
+        }
+        heap.push(QEntry {
+            count: count as u64,
+            pair,
+        });
     }
 
     Ok(TrainState {

@@ -14,6 +14,24 @@ nohup ./scripts/download_data.sh /mnt/hdd2/datasets_text > /tmp/hrm_text_downloa
 nohup ./scripts/train_tokenizer.sh /mnt/hdd2/datasets_text_transformed/HRM-Text /mnt/hdd2/models/HRM-Text/tokenizers/original/bpe > /tmp/hrm_text_train_tokenizer.log 2>&1 &
 ```
 
+## Train tokenizer (iterative Rust, checkpointable)
+
+```bash
+./scripts/train_tokenizer_iter.sh ~/hrm_text_tokenizer_cache /mnt/hdd2/models/HRM-Text/tokenizers/iterative/bpe ~/hrm_text_tokenizer_cache/_checkpoints
+```
+
+## Train tokenizer (C++ port, from existing words.bin)
+
+```bash
+./scripts/train_tokenizer_cpp.sh ~/hrm_text_tokenizer_cache/_checkpoints /mnt/hdd2/models/HRM-Text/tokenizers/cpp/bpe
+```
+
+## Tokenizer parity test
+
+```bash
+./scripts/test_tokenizer_parity.sh /mnt/hdd2/models/HRM-Text/tokenizers/original/bpe/tokenizer.json /mnt/hdd2/models/HRM-Text/tokenizers/iterative/bpe/tokenizer.json /mnt/hdd2/models/HRM-Text/tokenizers/cpp/bpe/tokenizer.json
+```
+
 ## Clean (всё по очереди)
 
 ```bash

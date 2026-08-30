@@ -58,6 +58,19 @@ indicatif bars vanish in `docker logs`. Both trainers print explicit progress
 lines instead (`[load]` every 15 s, `[train]` heartbeat, per-25-merge lines in
 the iterative trainer). Don't "fix" the bars — read the lines.
 
+## Resume must reconstruct queue eligibility (fixed)
+
+A merges checkpoint stores only vocab + merges, so on resume the pair-count
+priority queue is rebuilt from the replayed word state. Naively pushing all
+pairs with count > 0 is WRONG on this corpus: pairs whose i32 count was
+negative at init (overflow) but later wrapped positive through pure
+destruction are never queued in an uninterrupted run (the reference only
+queues pairs on positive *changes*), and resume would wrongly admit them.
+Fix (both `train_tokenizer_iter` and `train_tokenizer_cpp`): on resume, count
+pairs on the pre-replay state and admit a pair only if it was positive at
+init or involves a merged token (id ≥ initial vocab size). Verified: SIGTERM
+kill mid-run + resume produces byte-identical output for both trainers.
+
 ## Zombie-container teardown
 
 After ~300G allocations the container teardown could hang in D-state

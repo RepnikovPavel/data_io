@@ -6,14 +6,21 @@ Measured on this machine: 48 cores, 251G RAM, HDD `/mnt/hdd2` + NVMe.
 Corpus: 5221 files, 410,012,296 documents (instruction and response counted
 separately), 170.2 GiB text, 12.1M unique pre-tokenizer words.
 
-| | Baseline (`train_tokenizer`, data on HDD) | Iterative (`train_tokenizer_iter`, data on NVMe) |
-|---|---|---|
-| Load | 62.7 min | ~30 min* |
-| Train | 29.5 min | 4.5 min** |
-| **Total** | **~92 min** | **~35 min** |
-| Peak memory | ~280G virtual — spilled ~220G into NVMe swap; RAM-only would need ~300G or OOM | ~65G RAM, no swap |
-| Checkpointing | none | `words.bin` + `merges_N.bin` every 100 merges, SIGTERM-safe |
-| Result | baseline | byte-identical to baseline |
+| | Baseline (`train_tokenizer`, data on HDD) | Iterative (`train_tokenizer_iter`, data on NVMe) | C++ port (`train_tokenizer_cpp`, from `words.bin`) |
+|---|---|---|---|
+| Load | 62.7 min | ~30 min* | — (reuses the Rust `words.bin`) |
+| Train | 29.5 min | 4.5 min** | 49 s |
+| **Total** | **~92 min** | **~35 min** | load once + ~1 min |
+| Peak memory | ~280G virtual — spilled ~220G into NVMe swap; RAM-only would need ~300G or OOM | ~65G RAM, no swap (train phase alone: 7.0 GiB, 0 swap) | train phase: 4.0 GiB, 0 swap |
+| Checkpointing | none | `words.bin` + `merges_N.bin` every 100 merges, SIGTERM-safe | same formats, cross-compatible with Rust |
+| Result | baseline | byte-identical to baseline | byte-identical to baseline |
+
+Train-phase-only numbers measured with `/tmp/bench_train_monitor.sh` (docker
+stats every 5 s, includes page cache): Rust iterative 49 s wall / 7.0 GiB peak
+/ 0 swap; C++ 49 s wall / 4.0 GiB peak / 0 swap. Both started from the same
+`words.bin` and produced byte-identical output to the official
+`iterative/bpe/tokenizer.json` (`cmp` clean), and a SIGTERM kill + resume
+mid-run also produced byte-identical output for both.
 
 \* Includes a ~15 min single-threaded tail on the last huge file — the load
 parallelizes across files, not within one file. Known headroom: intra-file

@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir "huggingface_hub[cli]" gdown hf_transfer
 
 # Dependencies for pipe/*, pipe_clustered/* and utils
+# (`tokenizers`: for scripts/test_tokenizer_parity.py)
 RUN pip install --no-cache-dir \
     datasets \
     orjson \
@@ -17,6 +18,7 @@ RUN pip install --no-cache-dir \
     Pillow \
     polars \
     pyarrow \
+    tokenizers \
     tqdm
 
 WORKDIR /workspace
