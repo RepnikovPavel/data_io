@@ -101,11 +101,21 @@ def concat_tokens(tasks: list[Task], config: Config, tokenizer_info: dict[str, A
 
     vocab_size = tokenizer_info.get("vocab_size")
     if vocab_size is not None:
-        # TODO: may be this? np.iinfo(np.uint8).max+1 and np.iinfo(np.uint16).max+1
-        if vocab_size <= np.iinfo(np.uint8).max:
+        # Token ids live in [0, vocab_size-1]; no UNK/sentinel id is ever
+        # emitted by this pipeline (verified: tokenizer max id == vocab_size-1,
+        # <|PAD|> is a regular special token with id 0). So the dtype must fit
+        # vocab_size-1, i.e. the bound is `vocab_size - 1 <= dtype.max`.
+        # If even uint16 does not fit, fail loudly instead of silently
+        # doubling memory with int32.
+        if vocab_size - 1 <= np.iinfo(np.uint8).max:
             target_dtype = np.uint8
-        elif vocab_size <= np.iinfo(np.uint16).max:
+        elif vocab_size - 1 <= np.iinfo(np.uint16).max:
             target_dtype = np.uint16
+        else:
+            raise ValueError(
+                f"vocab_size={vocab_size} does not fit uint16; "
+                "decide the wider dtype explicitly (e.g. np.uint32) instead of "
+                "silently falling back to int32")
 
     Path(config.output_path).mkdir(parents=True, exist_ok=True)
     mmap_array = np.lib.format.open_memmap(Path(config.output_path) / "tokens.npy", mode="w+", dtype=target_dtype, shape=(total_tokens, ))

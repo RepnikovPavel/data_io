@@ -22,3 +22,9 @@ ndarray-npy = "0.10"
 rand = "0.10.0-rc.6"
 rand_pcg = "0.10.0-rc.6"
 rayon = "1.11"
+ctrlc = { version = "3.4", features = ["termination"] }
+
+[dev-dependencies]
+# Same versions as tokenizers 0.22 uses, for the reference-parity test.
+ahash = "0.8.12"
+compact_str = "0.9.0"

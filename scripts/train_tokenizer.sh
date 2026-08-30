@@ -15,7 +15,7 @@ docker build -t hrm_text_tokenizer_image -f "$PROJECT_ROOT/docker/DockerFileToke
 
 # Foreground + --rm: progress bars stream live, container exits when done.
 # stderr (indicatif progress) is unbuffered by design.
-docker run --rm \
+docker run --rm --init \
   --name hrm_text_train_tokenizer \
   --user $(id -u):$(id -g) \
   -v "$PROJECT_ROOT":/workspace \

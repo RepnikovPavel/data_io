@@ -1,0 +1,55 @@
+# Benchmarks
+
+← [README.md](README.md)
+
+Measured on this machine: 48 cores, 251G RAM, HDD `/mnt/hdd2` + NVMe.
+Corpus: 5221 files, 410,012,296 documents (instruction and response counted
+separately), 170.2 GiB text, 12.1M unique pre-tokenizer words.
+
+| | Baseline (`train_tokenizer`, data on HDD) | Iterative (`train_tokenizer_iter`, data on NVMe) |
+|---|---|---|
+| Load | 62.7 min | ~30 min* |
+| Train | 29.5 min | 4.5 min** |
+| **Total** | **~92 min** | **~35 min** |
+| Peak memory | ~280G virtual — spilled ~220G into NVMe swap; RAM-only would need ~300G or OOM | ~65G RAM, no swap |
+| Checkpointing | none | `words.bin` + `merges_N.bin` every 100 merges, SIGTERM-safe |
+| Result | baseline | byte-identical to baseline |
+
+\* Includes a ~15 min single-threaded tail on the last huge file — the load
+parallelizes across files, not within one file. Known headroom: intra-file
+parallelism would shave most of the tail.
+
+\** Measured with the first parity version; the final version (per-site
+incremental updates) runs the merge loop in ~1 min. Load dominates.
+
+Why the memory difference: the baseline keeps all 410M documents (170 GiB of
+Rust `String`s, plus per-doc overhead and the trainer's own structures) in RAM
+for the whole run. The iterative trainer never holds raw text: `words.bin` is
+~290 MB (12.1M unique words), and the train phase works on token-id sequences
+of unique words only.
+
+## Logging gotcha
+
+indicatif progress bars are invisible in non-TTY output (`docker logs`). Both
+trainers therefore emit explicit progress lines: `[load]` every 15 s,
+`[train]` heartbeat every 60 s; the iterative trainer also prints every 25
+merges with rate and ETA.
+
+## Cloud cost estimate
+
+Formula: `cost ≈ instance_price_per_hour × wall_hours` (storage negligible;
+~400G disk for corpus + checkpoints).
+
+| Trainer | Instance (example, on-demand us-east-1) | Why | Time | Cost |
+|---|---|---|---|---|
+| Iterative | i4i.8xlarge — 32 vCPU / 256G / NVMe, ~$2.7/hr | NVMe for load; 256G ≥ ~70G needed | ~40 min | **≈ $1.8** |
+| Baseline | r7i.16xlarge — 64 vCPU / 512G, ~$4.3/hr | needs ≥300G RAM to avoid swap | ~1.5 h | **≈ $6.5** |
+
+CPU/RAM requirements, stated explicitly:
+
+- **Load phase** parallelizes across files — 32–48 cores recommended; scales
+  near-linearly until I/O-bound (hence NVMe).
+- **Merge loop** is single-heavy (one core mostly) and memory-bound; extra
+  cores only help the parallel pair-count init and word replay on resume.
+- RAM: **≥ 70G** for the iterative trainer, **≥ 300G** for the baseline (or
+  accept ~220G of swap and the slowdown).

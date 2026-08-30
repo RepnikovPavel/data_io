@@ -10,6 +10,7 @@ WORKDIR /build
 COPY tokenizer/Cargo.toml tokenizer/Cargo.lock ./
 RUN mkdir -p src/bin && echo 'fn main() {}' > src/main.rs && echo '' > src/lib.rs \
     && echo 'fn main() {}' > src/bin/train_tokenizer.rs \
+    && echo 'fn main() {}' > src/bin/train_tokenizer_iter.rs \
     && cargo build --release && rm -rf src
 
 COPY tokenizer/src ./src
@@ -22,4 +23,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /build/target/release/tokenizer /usr/local/bin/tokenize_data
 COPY --from=build /build/target/release/train_tokenizer /usr/local/bin/train_tokenizer
+COPY --from=build /build/target/release/train_tokenizer_iter /usr/local/bin/train_tokenizer_iter
 WORKDIR /workspace
