@@ -13,7 +13,8 @@ docker logs -f data_io_hrm_text_container
 # notes  
 
 ```sh
-# broken link
-# docker exec data_io_hrm_text_container sh -c "gdown 'https://drive.google.com/uc?id=1hQsua3TkpEmcJD_UWQx8dmNdEZPyxw23' -O /mnt/hdd2/datasets_text/amps.tar.gz && tar -xzvf /mnt/hdd2/datasets_text/amps.tar.gz -C /mnt/hdd2/datasets_text && rm /mnt/hdd2/datasets_text/amps.tar.gz"
+# The original Google Drive link for amps.tar.gz (id 1hQsua3TkpEmcJD_UWQx8dmNdEZPyxw23) is dead (403).
+# download_data.sh uses the HF mirror instead: hf download minimalt/MATH_amps amps.tar.gz
+# (verified: identical original structure amps/{mathematica,khan}/..., ~292MB, ~4.9M files)
 ```
 

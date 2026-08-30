@@ -6,6 +6,16 @@ import orjson
 import pyarrow.parquet as pq
 
 
+def load_local_dataset(repo_id, *args, **kwargs):
+    """load_dataset() fully offline: resolves repo_id to the prefetched HF
+    cache snapshot (download stage) and loads from local files.
+    Works under HF_HUB_OFFLINE=1."""
+    from datasets import load_dataset
+    from huggingface_hub import snapshot_download
+    path = snapshot_download(repo_id, repo_type="dataset", local_files_only=True)
+    return load_dataset(path, *args, **kwargs)
+
+
 def read_jsonl(filename):
     with open(filename, "rb") as f:
         return map(orjson.loads, f.readlines())

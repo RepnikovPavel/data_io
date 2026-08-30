@@ -1,14 +1,17 @@
-import string
+import argparse
 import os
+import string
+import time
+from collections import defaultdict
 
-from datasets import load_dataset
 import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
+from utils import load_local_dataset
+
 
 DATASET = 'tasksource/tasksource-instruct-v0'
-OUTPUT_DIR = "data_clustered/tasksource"
 TASK_SET = {
     'WANLI',
     'recast/recast_verbnet',
@@ -264,6 +267,12 @@ TASK_SET = {
     'dnd_style_intents'
 }
 
+SCHEMA = pa.schema([
+    ("instruction", pa.string()),
+    ("response", pa.string()),
+    ("condition", pa.string()),
+])
+
 
 def safe_filename(filename):
     # Remove or replace unsafe characters
@@ -271,27 +280,102 @@ def safe_filename(filename):
     return "".join(c if c in safe_chars else "_" for c in filename)
 
 
-# Load dataset
-dataset = load_dataset(DATASET)["train"]
-data = {k: {"instruction": [], "response": [], "condition": []} for k in TASK_SET}
+def _transform_batch(batch):
+    """Filter to TASK_SET and remap columns (batched; order-preserving)."""
+    tasks, instructions, responses, conditions = [], [], [], []
+    for task, inputs, targets in zip(batch["task"], batch["inputs"], batch["targets"]):
+        if task not in TASK_SET:
+            continue
+        tasks.append(task)
+        instructions.append(inputs)
+        responses.append(targets.removesuffix("."))
+        conditions.append("direct")
+    return {
+        "task": tasks,
+        "instruction": instructions,
+        "response": responses,
+        "condition": conditions,
+    }
 
-for item in tqdm(dataset):
-    task = item["task"]
-    if task not in TASK_SET:
-        continue
 
-    data[task]["instruction"].append(item["inputs"])
-    data[task]["response"].append(item["targets"].removesuffix("."))
-    data[task]["condition"].append("direct")
+def clean_tasksource(output_path: str, workers: int):
+    os.makedirs(output_path, exist_ok=True)
+    started = time.time()
+
+    dataset = load_local_dataset(DATASET, split="train")
+    n_in = len(dataset)
+    dataset = dataset.map(
+        _transform_batch,
+        batched=True,
+        batch_size=10_000,
+        num_proc=workers,
+        remove_columns=dataset.column_names,
+        desc="transform",
+    )
+    total = len(dataset)
+    print(f"Kept {total}/{n_in} rows in TASK_SET tasks", flush=True)
+
+    # Stream batches to one incremental ParquetWriter per task: constant memory
+    # regardless of dataset size. Row order within each task is preserved
+    # (datasets.map keeps order, batches are consumed sequentially).
+    writers = {}
+    counts = defaultdict(int)
+
+    def get_writer(task):
+        writer = writers.get(task)
+        if writer is None:
+            writer = pq.ParquetWriter(
+                os.path.join(output_path, f"{safe_filename(task)}.parquet"), SCHEMA)
+            writers[task] = writer
+        return writer
+
+    write_started = time.time()
+    try:
+        with tqdm(total=total, desc="rows", unit="row", unit_scale=True) as bar:
+            for batch in dataset.iter(batch_size=50_000):
+                per_task = defaultdict(
+                    lambda: {"instruction": [], "response": [], "condition": []})
+                for task, instruction, response, condition in zip(
+                        batch["task"], batch["instruction"],
+                        batch["response"], batch["condition"]):
+                    d = per_task[task]
+                    d["instruction"].append(instruction)
+                    d["response"].append(response)
+                    d["condition"].append(condition)
+                for task, d in per_task.items():
+                    n = len(d["instruction"])
+                    get_writer(task).write_table(pa.Table.from_pydict(d, schema=SCHEMA))
+                    counts[task] += n
+                    bar.update(n)
+    finally:
+        for i, (task, writer) in enumerate(sorted(writers.items()), 1):
+            writer.close()
+            tqdm.write(f"[{i}/{len(writers)}] {task}: {counts[task]} rows")
+
+    not_found = sorted(TASK_SET - writers.keys())
+    if not_found:
+        print("Tasks Not Found: ", not_found)
+
+    elapsed = time.time() - started
+    print(f"Done: {len(writers)} tasks, {total} rows -> {output_path} "
+          f"in {elapsed:.0f}s (write phase {time.time() - write_started:.0f}s)",
+          flush=True)
 
 
-print ("Tasks Not Found: ", [k for k, v in data.items() if not v])
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--output_path', type=str,
+        default='/mnt/hdd2/datasets_text_transformed/HRM-Text/data_clustered/tasksource',
+        help='absolute path to data_clustered/tasksource')
+    parser.add_argument(
+        '--workers', type=int, default=min(8, os.cpu_count() or 1),
+        help='num_proc for the datasets.map transform '
+             '(default: min(8, cpu_count))')
+    args = parser.parse_args()
 
-# Write
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-for k, v in tqdm(data.items()):
-    if len(v["instruction"]) > 0:
-        pq.write_table(
-            pa.Table.from_pydict(v),
-            os.path.join(OUTPUT_DIR, f"{safe_filename(k)}.parquet")
-        )
+    clean_tasksource(output_path=args.output_path, workers=args.workers)
+
+
+if __name__ == "__main__":
+    main()

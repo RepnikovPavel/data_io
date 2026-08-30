@@ -172,3 +172,4 @@ cython_debug/
 
 download_log.txt
 download_data.txt
+logs

@@ -1,38 +1,77 @@
 #!/bin/bash
-mkdir -p /mnt/hdd2/datasets_text/Open-Orca
-mkdir -p /mnt/hdd2/datasets_text/PleIAs
-mkdir -p /mnt/hdd2/datasets_text/Platypus
+# Download ALL datasets needed by the clean_* scripts.
+# Usage: ./scripts/download_data.sh [DATASETS_DIR]
+# Each dataset downloads via its own script (scripts/download_*.sh) with its own
+# log (/tmp/hrm_text_download_<name>.log), so failures are isolated and progress
+# is per-dataset. Re-run any single dataset with its script directly.
+set -u
 
-docker stop data_io_hrm_text_container 2>/dev/null
-docker rm -f data_io_hrm_text_container 2>/dev/null
-docker build -t data_io_hrm_text_image -f docker/DockerFile .
+DATASETS_DIR="${1:-/mnt/hdd2/datasets_text}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-docker run -d --name data_io_hrm_text_container \
-  --restart unless-stopped \
-  --user $(id -u):$(id -g) \
-  -v /mnt/hdd2/datasets_text:/mnt/hdd2/datasets_text \
-  -w /mnt/hdd2/datasets_text \
-  -e HF_TOKEN=$HF_TOKEN \
-  -e HF_XET_HIGH_PERFORMANCE=1 \
-  -e HF_HOME=/mnt/hdd2/datasets_text/.hf_cache \
-  -e PYTHONUNBUFFERED=1 \
-  data_io_hrm_text_image \
-  bash -c "find /mnt/hdd2/datasets_text/ -name '*.lock' -delete 2>/dev/null; \
-           \
-           echo 'Starting FLAN download...'; \
-           hf download Open-Orca/FLAN --repo-type dataset --local-dir /mnt/hdd2/datasets_text/Open-Orca/FLAN --max-workers 8; \
-           \
-           echo 'Starting SYNTH download...'; \
-           hf download PleIAs/SYNTH --repo-type dataset --local-dir /mnt/hdd2/datasets_text/PleIAs/SYNTH --max-workers 8; \
-           \
-           echo 'Starting ARB download...'; \
-           hf download imone/ARB --repo-type dataset --local-dir /mnt/hdd2/datasets_text/Platypus/ARB --max-workers 8; \
-           \
-           echo 'Cloning scibench...'; \
-           git clone https://github.com/mandyyyyii/scibench.git /mnt/hdd2/datasets_text/Platypus/scibench || true; \
-           \
-           echo 'Downloading and extracting mathematics_dataset...'; \
-           wget -O /mnt/hdd2/datasets_text/mathematics_dataset-v1.0.tar.gz 'https://storage.googleapis.com/mathematics-dataset/mathematics_dataset-v1.0.tar.gz' && tar -xzvf /mnt/hdd2/datasets_text/mathematics_dataset-v1.0.tar.gz -C /mnt/hdd2/datasets_text && rm /mnt/hdd2/datasets_text/mathematics_dataset-v1.0.tar.gz; \
-           \
-           echo 'All downloads complete!'; \
-           sleep infinity"
+mkdir -p "$DATASETS_DIR/Open-Orca" "$DATASETS_DIR/PleIAs" "$DATASETS_DIR/Platypus"
+find "$DATASETS_DIR/" -name '*.lock' -delete 2>/dev/null || true
+
+# Pre-build the image once so parallel per-dataset scripts skip it.
+docker build -t data_io_hrm_text_image -f "$PROJECT_ROOT/docker/DockerFileDownloadStep" "$PROJECT_ROOT"
+
+HF_REPOS="
+openai/gsm8k
+EleutherAI/hendrycks_math
+facebook/natural_reasoning
+HuggingFaceH4/no_robots
+AI-MO/NuminaMath-1.5
+KbsdJames/Omni-MATH
+facebook/principia-collection
+TIGER-Lab/WebInstruct-verified
+allenai/openbookqa
+metaeval/reclor
+metaeval/ScienceQA_text_only
+TIGER-Lab/TheoremQA
+nvidia/AceReason-1.1-SFT
+nvidia/OpenMathInstruct-2
+open-thoughts/OpenThoughts2-1M
+sapientinc/sudoku-extreme
+tasksource/tasksource-instruct-v0
+MegaScience/TextbookReasoning
+"
+
+echo "== large datasets (plain layout) =="
+"$SCRIPT_DIR/download_hf.sh" Open-Orca/FLAN "$DATASETS_DIR" Open-Orca/FLAN \
+  > /tmp/hrm_text_download_flan.log 2>&1 &
+"$SCRIPT_DIR/download_hf.sh" PleIAs/SYNTH "$DATASETS_DIR" PleIAs/SYNTH \
+  > /tmp/hrm_text_download_synth.log 2>&1 &
+"$SCRIPT_DIR/download_hf.sh" imone/ARB "$DATASETS_DIR" Platypus/ARB \
+  > /tmp/hrm_text_download_arb.log 2>&1 &
+
+echo "== misc =="
+"$SCRIPT_DIR/download_amps.sh" "$DATASETS_DIR" \
+  > /tmp/hrm_text_download_amps.log 2>&1 &
+"$SCRIPT_DIR/download_scibench.sh" "$DATASETS_DIR" \
+  > /tmp/hrm_text_download_scibench.log 2>&1 &
+"$SCRIPT_DIR/download_math_dataset.sh" "$DATASETS_DIR" \
+  > /tmp/hrm_text_download_math_dataset.log 2>&1 &
+
+echo "== HF-cache datasets (used via load_dataset) =="
+echo "$HF_REPOS" | xargs -P 6 -I{} bash -c '
+  repo="{}"
+  name=$(echo "$repo" | tr "/" "_")
+  if "'"$SCRIPT_DIR"'/download_hf.sh" "$repo" "'"$DATASETS_DIR"'" > "/tmp/hrm_text_download_${name}.log" 2>&1; then
+    echo "OK: $repo"
+  else
+    echo "FAILED: $repo (log: /tmp/hrm_text_download_${name}.log)"
+  fi'
+
+echo "== waiting for large/misc downloads =="
+wait
+
+echo "== summary =="
+for log in /tmp/hrm_text_download_*.log; do
+  if grep -q "^DONE:" "$log" 2>/dev/null; then
+    echo "OK:     $(basename "$log" .log) ($(grep -c '^DONE:' "$log") done)"
+  else
+    echo "FAILED: $(basename "$log" .log)"
+  fi
+done
+echo "All downloads complete!"

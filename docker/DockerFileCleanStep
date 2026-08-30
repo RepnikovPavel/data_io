@@ -1,0 +1,21 @@
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    wget \
+    curl \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir "huggingface_hub[cli]" gdown hf_transfer
+
+# Dependencies for pipe/*, pipe_clustered/* and utils
+RUN pip install --no-cache-dir \
+    datasets \
+    orjson \
+    pandas \
+    polars \
+    pyarrow \
+    tqdm
+
+WORKDIR /workspace

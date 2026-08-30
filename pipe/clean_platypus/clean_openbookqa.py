@@ -1,48 +1,76 @@
-from datasets import load_dataset
-import pandas as pd
+import argparse
+import os
+import time
 
-from utils import write_jsonl
+from tqdm import tqdm
+
+from utils import load_local_dataset, write_jsonl
+
+SPLITS = ["train", "validation"]
 
 
-dataset = load_dataset('openbookqa', name='additional')
+def _format_batch(batch):
+    conditions, instructions, responses = [], [], []
+    for question_stem, fact1, choices, answer_key in zip(
+            batch["question_stem"], batch["fact1"],
+            batch["choices"], batch["answerKey"]):
+        # Convert the choices into multiple choice format
+        choice_texts = choices["text"]
+        formatted_choices = "\n".join(
+            f"\n{chr(65 + i)}: {choice}" if i == 0 else f"{chr(65 + i)}: {choice}"
+            for i, choice in enumerate(choice_texts))
+        instruction = (
+            "Based on the given fact, which of the following option is the "
+            f"correct answer to the question?\n\n{question_stem} "
+            f"{formatted_choices}\n\nFact: {fact1}")
+        conditions.append("direct")
+        instructions.append(instruction)
+        responses.append(answer_key)
+    return {"condition": conditions, "instruction": instructions,
+            "response": responses}
 
-# put data in a dataframe
-df_train = pd.DataFrame(dataset['train'])
-df_val = pd.DataFrame(dataset['validation'])
 
-# Put the dataframes into a single dataframe
-df = pd.concat([df_train, df_val])
-df.head()
+def clean_openbookqa(output_path: str, workers: int):
+    started = time.time()
+    dataset = load_local_dataset("openbookqa", name="additional")
 
-# Convert the choices into multiple choice format
-df['choices'] = df['choices'].apply(lambda x: [x['text'][i] for i in range(len(x['text']))])
+    # Small dataset (~5.5k rows): collect formatted records in memory,
+    # preserving the original order (train first, then validation).
+    records = []
+    for i, split in enumerate(SPLITS, 1):
+        t0 = time.time()
+        ds = dataset[split]
+        mapped = ds.map(
+            _format_batch,
+            batched=True,
+            num_proc=min(workers, len(ds)),
+            remove_columns=ds.column_names,
+            desc=f"format {split}",
+        )
+        rows = mapped.to_list()
+        records.extend(rows)
+        tqdm.write(f"[{i}/{len(SPLITS)}] {split}: {len(rows)} rows in "
+                   f"{time.time() - t0:.1f}s")
 
-# Start with an empty list to hold all the new JSON objects
-json_objects_updated = []
+    write_jsonl(output_path, records)
+    elapsed = time.time() - started
+    print(f"Done: {len(records)} rows -> {output_path} in {elapsed:.1f}s",
+          flush=True)
 
-# For each row in the dataframe
-for idx, row in df.iterrows():
-    # Parse the choices string into a list
-    choices = row['choices']
-    
-    # Format the choices with alphabetic indicators
-    formatted_choices = '\n'.join([f'\n{chr(65+i)}: {choice}' if i == 0 else f'{chr(65+i)}: {choice}' for i, choice in enumerate(choices)])
-    
-    # Combine the question stem with the formatted choices
-    instruction = f"Based on the given fact, which of the following option is the correct answer to the question?\n\n{row['question_stem']} {formatted_choices}\n\nFact: {row['fact1']}"
-    
-    # Get the correct answer based on the answer key
-    correct_answer = choices[ord(row['answerKey']) - 65]
-    
-    # Format the output with a random answer prefix from the updated list, the correct answer key, and the correct answer
-    output = row['answerKey']
-    
-    # Create the JSON object and append it to the list
-    json_objects_updated.append({
-        "condition": "direct",
-        "instruction": instruction,
-        "response": output
-    })
 
-# Create a JSON file with the updated JSON objects, with an indent of 1 for readability
-write_jsonl(f"data/Platypus/openbookqa.jsonl", json_objects_updated)
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--output_path', type=str,
+        default='/mnt/hdd2/datasets_text_transformed/HRM-Text/data/Platypus/openbookqa.jsonl',
+        help='absolute path to the output jsonl file')
+    parser.add_argument(
+        '--workers', type=int, default=min(8, os.cpu_count() or 1),
+        help='num_proc for datasets.map (default: min(8, cpu_count))')
+    args = parser.parse_args()
+
+    clean_openbookqa(output_path=args.output_path, workers=args.workers)
+
+
+if __name__ == "__main__":
+    main()

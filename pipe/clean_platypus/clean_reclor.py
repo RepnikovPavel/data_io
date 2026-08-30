@@ -1,58 +1,70 @@
-from datasets import load_dataset
-import pandas as pd
+import argparse
+import os
+import time
 
-from utils import write_jsonl
+from datasets import concatenate_datasets
+from tqdm import tqdm
+
+from utils import load_local_dataset, write_jsonl
+
+DATASET_NAME = "metaeval/reclor"
+SPLITS = ("train", "validation")
+OUTPUT_FILENAME = "reclor.jsonl"
 
 
-# Define a list of math and STEM-related keywords
-# keywords_expanded = [
-#     # Mathematics
-#     "algebra", "geometry", "calculus", "statistics", "probability", "theorem", "proof", "equation", 
-#     "integral", "derivative", "matrix", "vector", "graph", "function", "complex number", "real number", 
-#     "imaginary number", "differential", "fraction", "decimal", "percent", "logarithm", 
-#     "sequence", "sum", "product", "difference", "quotient", "prime", "composite", "factorial", "binomial", 
-#     "polynomial", "exponential", "pi", "euler", "infinity", "limit", "derivative", "integral", 
-#     "differential equation", "linear algebra", "set theory", "group theory", "ring theory", "field theory", 
-#     "number theory", "combinatorics", "topology", "measure theory", "game theory", "cryptology", 
-#     "algorithm", "computation","percentage","calculation"
-    
-#     # General STEM
-#     "science", "technology", "engineering", "physics", "chemistry", "biology", "computer science", 
-#     "information technology", "environmental", "aerospace", 
-#     "biomedical", "chemical", "robotics", "AI", "artificial intelligence", 
-#     "machine learning", "deep learning", "neural network", "algorithm", "programming", "coding", 
-#     "software", "hardware", "network", "database", "security", "cybersecurity", "blockchain", 
-#     "virtual reality", "augmented reality", "quantum", "nanotechnology", "biotechnology", "genetics", 
-#     "genomics", "solar", "wind", "hydro", 
-#     "nuclear", "fossil fuel", "carbon", "greenhouse gas", "pollution", "conservation", "biodiversity", 
-#     "ecosystem", "species", "evolution", "cell", "molecule", "atom", "particle", "quantum", "gravity", 
-#     "relativity", "momentum", "velocity", "acceleration", "mass", "heat", "light", "sound", "electricity", "magnetism",
-# ]
+def format_batch(batch):
+    conditions, instructions, responses = [], [], []
+    for context, question, answers, label in zip(
+            batch["context"], batch["question"], batch["answers"], batch["label"]):
+        instruction = f"{question}\n\n{context}\n\nOptions:"
+        for i, ans in enumerate(answers):
+            instruction += "\n" + chr(65 + i) + ": " + ans
+        instructions.append(instruction)
+        conditions.append("direct")
+        responses.append(chr(65 + label))
+    return {"condition": conditions, "instruction": instructions, "response": responses}
 
-data = load_dataset('metaeval/reclor')
-data = pd.concat([pd.DataFrame(data[subset_name]) for subset_name in ("train", "validation")])
 
-# Function for update
-def format_question(data_entry):
-    context = data_entry['context']
-    question = data_entry['question']
-    answers = data_entry['answers']
-    label = data_entry['label']
+def clean_reclor(output_path: str, workers: int):
+    os.makedirs(output_path, exist_ok=True)
+    out_file = os.path.join(output_path, OUTPUT_FILENAME)
+    started = time.time()
 
-    formatted_question = f"{question}\n\n{context}\n\nOptions:"
-    for i, ans in enumerate(answers):
-        formatted_question += "\n" + chr(65+i) + ": " + ans  
+    data = load_local_dataset(DATASET_NAME)
+    # Keep the original record order: all train rows, then all validation rows.
+    dataset = concatenate_datasets([data[split_name] for split_name in SPLITS])
+    total = len(dataset)
+    print(f"Loaded {total} rows from {DATASET_NAME} ({', '.join(SPLITS)})", flush=True)
 
-    # Create the formatted answer string
-    formatted_answer = chr(65+label)
+    mapped = dataset.map(
+        format_batch,
+        batched=True,
+        batch_size=1000,
+        num_proc=workers if workers > 1 else None,
+        remove_columns=dataset.column_names,
+        desc="formatting",
+    )
 
-    return {"condition": "direct", "instruction": formatted_question, "response": formatted_answer}
+    write_jsonl(out_file, tqdm(mapped, total=total, desc="writing", unit="rows"))
 
-reclor_data = [format_question(entry) for idx, entry in data.iterrows()]
+    elapsed = time.time() - started
+    print(f"[1/1] {OUTPUT_FILENAME}: {total} rows in {elapsed:.0f}s", flush=True)
+    print(f"Done: {total} rows -> {out_file} in {elapsed:.1f}s", flush=True)
 
-# Filter the data based on the presence of any of these keywords in the instruction field
-# filtered_data_keywords_reclor = [item for item in reclor_data if any(re.search(r'\b' + keyword + r'\b', item['instruction'].lower()) for keyword in keywords_expanded)]
-# print('Number of examples kept: ',len(filtered_data_keywords_reclor))
 
-# save to json file
-write_jsonl(f"data/Platypus/reclor.jsonl", reclor_data)
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--output_path', type=str,
+        default='/mnt/hdd2/datasets_text_transformed/HRM-Text/data/Platypus',
+        help='output directory; reclor.jsonl is written inside it')
+    parser.add_argument(
+        '--workers', type=int, default=min(8, os.cpu_count() or 1),
+        help='number of processes for datasets.map (default: min(8, cpu_count))')
+    args = parser.parse_args()
+
+    clean_reclor(output_path=args.output_path, workers=args.workers)
+
+
+if __name__ == "__main__":
+    main()
