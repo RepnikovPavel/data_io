@@ -1,64 +1,83 @@
 # theoremqa
 
+↑ [index](README.md) · ← [scienceqa](scienceqa.md) · [next → flan](flan.md)
+
 **Script:** `pipe/clean_platypus/clean_theoremqa.py`
 
 ## Purpose
 
-TheoremQA university-level math/science questions (test split). Rows containing a picture are dropped; the rest are direct question->answer pairs.
+TheoremQA: 800 expert-curated university-level questions driven by 350+ STEM theorems (math, EE&CS, physics, finance). Rows containing a picture are dropped; the rest become direct question->answer pairs.
 
 ## Before (raw storage)
 
 - Source: HF `TIGER-Lab/TheoremQA` (split `test`)
-- Format: HF dataset (arrow) in the prefetched local cache
+- Storage: HF dataset (arrow table) in the prefetched local cache
 
-Columns actually read by the transform:
+Fields read by the transform (types derived from the actual files):
 
-| column | type | meaning |
+| field | type | meaning |
 |---|---|---|
-| `Question` | string | the question |
-| `Answer` | string | the answer |
-| `Picture` | string|null | filter only: rows with a picture are dropped |
+| `Question` | UTF-8 text (arrow `string`) | the question |
+| `Answer` | UTF-8 text (arrow `string`) | the answer |
+| `Picture` | image (arrow `struct<bytes, path>`, PIL-decoded) | filter only: rows with a picture are dropped |
 
 ## After (transformed)
 
 - Location: `data/Platypus/theoremqa.jsonl` (under `/mnt/hdd2/datasets_text_transformed/HRM-Text`; 1 file(s))
-- Format: JSONL — one JSON object per line, keys `condition`, `instruction`, `response` (all string)
+- Storage: JSONL — one JSON object per line, UTF-8; keys `condition`, `instruction`, `response`
 - Rows: 747
 
-`condition` values used here:
+| column | type | meaning |
+|---|---|---|
+| `condition` | JSON string — UTF-8 text | comma-separated tags (see keyword table below) |
+| `instruction` | JSON string — UTF-8 text | the prompt |
+| `response` | JSON string — UTF-8 text | the target |
 
-- `direct` — final answer only
+## Keyword: `condition` (output)
+
+Every output record carries this tag; training samples/mixes by it.
+
+| value | rows | meaning | why it matters |
+|---|---|---|---|
+| `direct` | 747 | final answer only | theorem-application questions, answer-verified style |
+
+_exact counts (full scan of the jsonl file)_
+
+## Keyword: `Answer_type` (input)
+
+Declared answer type per question (unused by the transform; shown for context).
+
+| value | rows |
+|---|---|
+| `float` | 378 |
+| `integer` | 216 |
+| `bool` | 115 |
+| `list of integer` | 61 |
+| `option` | 18 |
+| `list of float` | 12 |
+
+_exact counts (all 800 rows)_
 
 ## Examples
 
-Fields longer than 600 chars are truncated (`… [truncated, N chars total]`).
+Fields longer than 600 chars are truncated (`… [truncated, N chars total]`); in tables, `⏎` marks a newline inside the value.
 
-### Raw record (HF `TIGER-Lab/TheoremQA`, split `test`)
+### Raw — HF `TIGER-Lab/TheoremQA`, split `test`
 
-````text
-{
-  "Question": "How many ways are there to divide a set of 8 elements into 5 non-empty ordered subsets?",
-  "Answer": "11760",
-  "Picture": null
-}
+One row of HF `TIGER-Lab/TheoremQA`, split `test` (an arrow table in the local HF cache), shown as a table with the columns the transform reads:
+
+| Question | Answer | Picture |
+|---|---|---|
+| How many ways are there to divide a set of 8 elements into 5 non-empty ordered subsets? | 11760 | ∅ (null) |
+
+### Transformed — condition=`direct`
+
+One line of `data/Platypus/theoremqa.jsonl` (JSONL — one JSON object per line, UTF-8):
+
+````jsonl
+{"condition": "direct", "instruction": "How many ways are there to divide a set of 8 elements into 5 non-empty ordered subsets?", "response": "11760"}
 ````
 
-### Transformed record (`data/Platypus/theoremqa.jsonl`, record 1)
+---
 
-````text
-{
-  "condition": "direct",
-  "instruction": "How many ways are there to divide a set of 8 elements into 5 non-empty ordered subsets?",
-  "response": "11760"
-}
-````
-
-### Transformed record (`data/Platypus/theoremqa.jsonl`, record 2)
-
-````text
-{
-  "condition": "direct",
-  "instruction": "what is the value of $\\int_{-infty}^{+infty} sin(3*t)*sin(t/\\pi)/t^2 dt$?",
-  "response": "1.0"
-}
-````
+↑ [index](README.md) · ← [scienceqa](scienceqa.md) · [next → flan](flan.md)

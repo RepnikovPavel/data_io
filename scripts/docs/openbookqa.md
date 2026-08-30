@@ -1,79 +1,80 @@
 # openbookqa
 
+↑ [index](README.md) · ← [arb](arb.md) · [next → reclor](reclor.md)
+
 **Script:** `pipe/clean_platypus/clean_openbookqa.py`
 
 ## Purpose
 
-OpenBookQA elementary science multiple-choice questions ('additional' config with the supporting fact1). Question, options and fact are rendered into one instruction.
+OpenBookQA: ~6k elementary science multiple-choice questions ('additional' config, which adds the supporting fact1). Question, options and fact are rendered into one instruction; the response is the option letter.
 
 ## Before (raw storage)
 
 - Source: HF `allenai/openbookqa` (config `additional`, splits `train`+`validation`)
-- Format: HF dataset (arrow) in the prefetched local cache
+- Storage: HF dataset (arrow table) in the prefetched local cache
 
-Columns actually read by the transform:
+Fields read by the transform (types derived from the actual files):
 
-| column | type | meaning |
+| field | type | meaning |
 |---|---|---|
-| `question_stem` | string | the question |
-| `fact1` | string | supporting fact appended to the instruction |
-| `choices` | {text: list[string], label: list[string]} | answer options, rendered as A:/B:/C:/D: |
-| `answerKey` | string | correct option letter (the response) |
+| `question_stem` | UTF-8 text (arrow `string`) | the question |
+| `fact1` | UTF-8 text (arrow `string`) | supporting fact appended to the instruction |
+| `choices` | arrow struct {text: arrow list — UTF-8 text (arrow `string`), label: arrow list — UTF-8 text (arrow `string`)} | answer options, rendered as A:/B:/C:/D: |
+| `answerKey` | UTF-8 text (arrow `string`) | correct option letter (the response) |
 
 ## After (transformed)
 
 - Location: `data/Platypus/openbookqa.jsonl` (under `/mnt/hdd2/datasets_text_transformed/HRM-Text`; 1 file(s))
-- Format: JSONL — one JSON object per line, keys `condition`, `instruction`, `response` (all string)
+- Storage: JSONL — one JSON object per line, UTF-8; keys `condition`, `instruction`, `response`
 - Rows: 5,457
 
-`condition` values used here:
+| column | type | meaning |
+|---|---|---|
+| `condition` | JSON string — UTF-8 text | comma-separated tags (see keyword table below) |
+| `instruction` | JSON string — UTF-8 text | the prompt |
+| `response` | JSON string — UTF-8 text | the target |
 
-- `direct` — correct option letter
+## Keyword: `condition` (output)
+
+Every output record carries this tag; training samples/mixes by it.
+
+| value | rows | meaning | why it matters |
+|---|---|---|---|
+| `direct` | 5,457 | correct option letter | fact-grounded MCQ answering |
+
+_exact counts (full scan of the jsonl file)_
+
+## Keyword: `split` (input)
+
+The two HF splits concatenated by the script (test is unused).
+
+| value | rows |
+|---|---|
+| `train` | 4,957 |
+| `validation` | 500 |
+
+_exact (HF split sizes)_
 
 ## Examples
 
-Fields longer than 600 chars are truncated (`… [truncated, N chars total]`).
+Fields longer than 600 chars are truncated (`… [truncated, N chars total]`); in tables, `⏎` marks a newline inside the value.
 
-### Raw record (HF `allenai/openbookqa` (config `additional`), split `train`)
+### Raw — HF `allenai/openbookqa` (config `additional`), split `train`
 
-````text
-{
-  "question_stem": "The sun is responsible for",
-  "fact1": "the sun is the source of energy for physical cycles on Earth",
-  "choices": {
-    "text": [
-      "puppies learning new tricks",
-      "children growing up and getting old",
-      "flowers wilting in a vase",
-      "plants sprouting, blooming and wilting"
-    ],
-    "label": [
-      "A",
-      "B",
-      "C",
-      "D"
-    ]
-  },
-  "answerKey": "D"
-}
+One row of HF `allenai/openbookqa` (config `additional`), split `train` (an arrow table in the local HF cache), shown as a table with the columns the transform reads:
+
+| question_stem | fact1 | choices | answerKey |
+|---|---|---|---|
+| The sun is responsible for | the sun is the source of energy for physical cycles on Earth | {"text": ["puppies learning new tricks", "children growing up and getting old", "flowers wilting in a vase", "plants sprouting, blooming and wilting"], "label": ["A", "B", "C", "D"]} | D |
+
+### Transformed — condition=`direct`
+
+One line of `data/Platypus/openbookqa.jsonl` (JSONL — one JSON object per line, UTF-8):
+
+````jsonl
+{"condition": "direct", "instruction": "Based on the given fact, which of the following option is the correct answer to the question?\n\nThe sun is responsible for \nA: puppies learning new tricks\nB: children growing up and getting old\nC: flowers wilting in a vase\nD: plants sprouting, blooming and wilting\n\nFact: the sun is the source of energy for physical cycles on Earth", "response": "D"}
 ````
 
-### Transformed record (`data/Platypus/openbookqa.jsonl`, record 1)
+---
 
-````text
-{
-  "condition": "direct",
-  "instruction": "Based on the given fact, which of the following option is the correct answer to the question?\n\nThe sun is responsible for \nA: puppies learning new tricks\nB: children growing up and getting old\nC: flowers wilting in a vase\nD: plants sprouting, blooming and wilting\n\nFact: the sun is the source of energy for physical cycles on Earth",
-  "response": "D"
-}
-````
-
-### Transformed record (`data/Platypus/openbookqa.jsonl`, record 2)
-
-````text
-{
-  "condition": "direct",
-  "instruction": "Based on the given fact, which of the following option is the correct answer to the question?\n\nWhen standing miles away from Mount Rushmore \nA: the mountains seem very close\nB: the mountains are boring\nC: the mountains look the same as from up close\nD: the mountains seem smaller than in photographs\n\nFact: as distance to an object increases , that object will appear smaller",
-  "response": "D"
-}
-````
+↑ [index](README.md) · ← [arb](arb.md) · [next → reclor](reclor.md)
