@@ -27,9 +27,13 @@ Why the transform exists: the raw datasets are heterogeneous (HF datasets, JSON 
 |---|---|---|---|---|
 | gsm8k_train | HF `openai/gsm8k` (config `main`, split `train`) | `direct` | 7,473 | [gsm8k_train.md](gsm8k_train.md) |
 | math_train | HF `EleutherAI/hendrycks_math` (7 subject configs, split `train`) | `cot`, `direct` | 14,996 | [math_train.md](math_train.md) |
+| natural_reasoning | HF `facebook/natural_reasoning` (split `train`) | `noisy,direct` | 770,141 | [natural_reasoning.md](natural_reasoning.md) |
 | no_robots | HF `HuggingFaceH4/no_robots` (all splits) | `cot` | 10,000 | [no_robots.md](no_robots.md) |
+| numinamath | HF `AI-MO/NuminaMath-1.5` (split `train`) | `noisy,cot`, `noisy,direct` | 811,921 | [numinamath.md](numinamath.md) |
 | omnimath | HF `KbsdJames/Omni-MATH` (split `test`) | `cot`, `direct` | 8,856 | [omnimath.md](omnimath.md) |
+| principia_collection | HF `facebook/principia-collection` (all splits) | `synth,direct` | 554,399 | [principia_collection.md](principia_collection.md) |
 | webinstruct_verified | HF `TIGER-Lab/WebInstruct-verified` (split `train`) | `direct` | 228,736 | [webinstruct_verified.md](webinstruct_verified.md) |
+| amps_khan | `/mnt/hdd2/datasets_text/amps/khan/**/*.json` (extracted from `/mnt/hdd2/datasets_text/amps.tar.gz`) | `noisy,cot` | 103,059 | [amps_khan.md](amps_khan.md) |
 | arb | `/mnt/hdd2/datasets_text/Platypus/ARB/*.json` (5 subject files) | `cot`, `direct` | 901 | [arb.md](arb.md) |
 | openbookqa | HF `allenai/openbookqa` (config `additional`, splits `train`+`validation`) | `direct` | 5,457 | [openbookqa.md](openbookqa.md) |
 | reclor | HF `metaeval/reclor` (splits `train`+`validation`) | `direct` | 5,138 | [reclor.md](reclor.md) |
@@ -39,5 +43,12 @@ Why the transform exists: the raw datasets are heterogeneous (HF datasets, JSON 
 | flan | `/mnt/hdd2/datasets_text/Open-Orca/FLAN/<subset>/*.parquet` | `direct`, `cot` | 377,759,274 | [flan.md](flan.md) |
 | synth | `/mnt/hdd2/datasets_text/PleIAs/SYNTH/*.parquet` | `synth,cot`, `synth,direct`, `synth,noisy,cot` | 60,934,844 | [synth.md](synth.md) |
 | dmmath | `/mnt/hdd2/datasets_text/mathematics_dataset-v1.0/{train-easy,train-medium,train-hard}/*.txt` | `direct` | 111,999,888 | [dmmath.md](dmmath.md) |
+| acereason | HF `nvidia/AceReason-1.1-SFT` (split `train`) | `synth,cot` | 2,668,741 | [acereason.md](acereason.md) |
+| ampsmathematica | `/mnt/hdd2/datasets_text/amps.tar.gz` (members `amps/mathematica/<topic>/<task>/*.txt`) | `noisy,cot`, `noisy,direct` | 4,830,500 | [ampsmathematica.md](ampsmathematica.md) |
+| openmathinstruct2 | HF `nvidia/OpenMathInstruct-2` (split `train`) | `synth,cot`, `synth,direct` | 25,023,023 | [openmathinstruct2.md](openmathinstruct2.md) |
+| openthoughts2 | HF `open-thoughts/OpenThoughts2-1M` (split `train`) | `synth,cot` | 892,168 | [openthoughts2.md](openthoughts2.md) |
+| sudoku_extreme | HF `sapientinc/sudoku-extreme` (file `train.csv`) | `direct` | 3,831,994 | [sudoku_extreme.md](sudoku_extreme.md) |
+| tasksource | HF `tasksource/tasksource-instruct-v0` (split `train`) | `direct` | 2,363,550 | [tasksource.md](tasksource.md) |
+| textbookreasoning | HF `MegaScience/TextbookReasoning` (split `train`) | `synth,cot`, `noisy,direct` | 1,178,449 | [textbookreasoning.md](textbookreasoning.md) |
 
 Datasets not listed above had no transformed output yet when this file was generated (the cleaning queue is still running); the generator skips them and picks them up on the next run.
