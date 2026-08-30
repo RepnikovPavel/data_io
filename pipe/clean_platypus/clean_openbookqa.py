@@ -32,7 +32,7 @@ def _format_batch(batch):
 
 def clean_openbookqa(output_path: str, workers: int):
     started = time.time()
-    dataset = load_local_dataset("openbookqa", name="additional")
+    dataset = load_local_dataset("allenai/openbookqa", name="additional")
 
     # Small dataset (~5.5k rows): collect formatted records in memory,
     # preserving the original order (train first, then validation).
