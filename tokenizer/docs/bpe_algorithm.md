@@ -1,144 +1,212 @@
-# BPE training — the algorithm in pseudocode
+# BPE: training and inference, in pseudocode
 
 ↑ [index](README.md)
 
-For a reader who has never seen BPE (Byte Pair Encoding). This describes
-exactly what `train_tokenizer_iter` / `tokenizer_cpp` implement, at the level
-of data structures. No ML background needed: BPE training is just counting
-and merging symbols.
+Byte Pair Encoding for a reader who has never seen it. This is exactly what
+`train_tokenizer_iter` (Rust) and `tokenizer_cpp` implement.
 
-## Input / output
+**The whole idea:** start with a vocabulary of single bytes. Repeatedly find
+the most frequent *adjacent pair* of symbols in the corpus and merge it into
+one new symbol. After 65264 merges the vocabulary has 65536 entries: frequent
+substrings (" the", "ing", "Ġthe") became single tokens; rare text still
+splits into bytes, so nothing is ever unencodable.
 
-**Input:** a corpus of text documents (in this project: 410M documents,
-170 GiB, after the sampling limits of `prefix_config.yaml`), plus parameters:
-`vocab_size` (65536), `min_frequency` (2), a list of special tokens, a
-pre-tokenizer regex.
+## Notation and data formats
 
-**Output:** `tokenizer.json` —
-- `vocab`: map `token string -> id` (65536 entries; ids 0..30 are the special
-  tokens, then the byte alphabet, then merged tokens in merge order),
-- `merges`: ordered list of 65264 pairs `[A, B]` — the *rules* learned below.
-- plus the fixed machinery: NFC normalizer, pre-tokenizer regex, byte-level
-  decoder.
+| artifact | what it is | format | size on our corpus |
+|---|---|---|---|
+| corpus | 5221 parquet/jsonl files, columns `condition, instruction, response` | parquet (snappy) / JSONL | 345 GiB compressed |
+| documents | `instruction` and `response` of each row, as separate text strings | in-memory UTF-8 | 410,012,296 docs, 170.2 GiB text |
+| `words.bin` | **unique pretokenized words with counts** — the only input the merge loop needs | binary, spec below | 288 MiB, 12,127,412 unique words |
+| `merges_N.bin` | resume checkpoint after N merges | binary, spec below | ~1.2 MB at N=65200 |
+| `tokenizer.json` | the trained tokenizer | HF tokenizers JSON | 4.7 MB |
 
-At *inference* time the learned tokenizer is applied greedily: split text by
-the same regex, map to bytes, then repeatedly apply the merge rules **in the
-order they were learned** (rule 1 first). The merge order is what makes the
-encoding deterministic.
+### What exactly is inside words.bin
 
-## Key idea
+A "word" = one piece produced by the pre-tokenizer regex from NFC-normalized
+text. Real examples (top by count) — note these are *text pieces*, not tokens
+yet; spaces and punctuation are words too:
 
-Start with a vocabulary of single bytes (256 symbols) + the 31 special tokens.
-Repeatedly find the most frequent *adjacent pair* of symbols in the corpus and
-merge it into one new symbol. Stop when the vocabulary reaches `vocab_size`.
-Frequent substrings become single tokens; rare text stays split into bytes.
+```
+" the"  1,412,457,831
+","     1,278,416,784
+" "       994,680,691
+"."       954,394,480
+"1"       721,120,752
+" of"     717,145,171
+"0"       692,848,596
+" and"    671,535,133
+```
 
-## Phase 1 — build word statistics (the "load" phase, `words.bin`)
+Emoji / Cyrillic / any Unicode appear as their raw UTF-8 bytes. Special
+tokens (`<|direct|>` etc.) are NOT here — they are injected into the
+vocabulary directly at training time.
 
-```text
-word_count = {}                       # map: tuple of byte-symbols -> u64
+Binary layout (little-endian, written atomically via tmp+rename):
 
-for file in input_files:              # parquet/jsonl, in parallel
+```
+u32  magic "WBI1"
+u64  docs_total        # 410,012,296
+u64  bytes_total       # text bytes scanned (170.2 GiB)
+u64  n_words           # 12,127,412
+n_words × { u32 len | u8 word_bytes[len] | u64 count }
+```
+
+**Words are stored sorted lexicographically** — so the file is deterministic
+(bit-identical across runs and thread counts) and diffable.
+
+### The pre-tokenizer regex
+
+```
+(?i:'s|'t|'re|'ve|'m|'ll|'d)        # English contractions: "don't" -> "don", "'t"
+| [^\r\n\p{L}\p{N}]?\p{L}+          # optional punct/space + letter run: " the", "!Hello"
+| \p{N}                             # single digit/number char
+| ?[^\s\p{L}\p{N}]+[\r\n]*          # punctuation run (optional leading space)
+| \s*[\r\n]+                        # newline runs
+| \s+(?!\S)                         # trailing whitespace
+| \s+                               # other whitespace runs
+```
+
+Input: one document (a plain string). Output: a list of pieces — letters
+sticks to letters, digits split apart, punctuation clumps, whitespace is its
+own piece. Example:
+
+```
+"Hello world! 2+2=4"  ->  ["Hello", " world", "!", " 2", "+", "2", "=", "4"]
+```
+
+## Phase 1 — count words (`words.bin`)
+
+```python
+# input: corpus files; output: words.bin
+word_count = {}                     # dict: word_bytes -> u64
+
+for file in corpus_files:           # parallel over files
     for (condition, instruction, response) in file:
         for text in (instruction, response):
-            text = first_10000_chars(text)
-            text = NFC(text)                       # normalize unicode
-            for word in regex_split(text):         # GPT-2-style regex:
-                                                   # words, numbers, punctuation,
-                                                   # whitespace runs
-                symbols = byte_level_encode(word)  # each byte -> one symbol
-                                                   # (space -> "Ġ", etc.)
-                word_count[symbols] += 1
+            text = first_chars(text, 10_000)     # long-tail cut, see below
+            text = NFC(text)                     # canonical unicode form
+            for word in regex_split(text):       # pieces like " the", ",", "!"
+                word_count[word] += 1
 
-save words.bin                        # {word_symbols: count}, sorted
+save_sorted(word_count, "words.bin")  # lexicographic order -> deterministic
 ```
 
-Notes:
-- The corpus is never kept in memory in this phase — only *unique* words with
-  counts survive (12.1M unique words for our corpus).
-- `first_10000_chars` (`--truncate-len`, default 10 000) cuts only the tails of
-  very long documents, and only for tokenizer *training* (the model-training
-  data is not truncated). Measured on our corpus: 0.37% of documents affected
-  (mostly long SYNTH answers), ≈0.2% of characters lost. Rationale: BPE merge
-  statistics need frequent patterns, not rare long tails; 10k chars ≈ well
-  beyond the 4096-token training context.
-- Everything downstream works on **weighted words**: a word with count 1000
-  counts as 1000 occurrences when we count pairs.
+Only *unique* words survive — 410M documents / 170 GiB of text compress to
+288 MiB of statistics. The merge loop never touches the raw corpus again.
 
-## Phase 2 — the merge loop (the "train" phase, `merges_N.bin`)
+(`first_chars(text, 10_000)` cuts the tails of very long documents, tokenizer
+training only. Measured impact: 0.37% of documents, ≈0.2% of characters.)
 
-```text
-vocab  = special_tokens (ids 0..30) + alphabet (byte symbols present in corpus)
-merges = []                            # ordered merge rules
-tokens = { word: list_of_symbols }     # every unique word as a symbol sequence
+## Phase 2 — the merge loop (`merges_N.bin` checkpoints)
 
-# initial pair statistics over all words, weighted by count
-pair_count = {}
-pair_to_words = {}                     # pair -> set of words containing it
-for word, cnt in word_count:
-    for each adjacent pair (a, b) in tokens[word]:
-        pair_count[(a, b)] += cnt      # NOTE: i32 with wraparound (see gotchas.md)
-        pair_to_words[(a, b)].add(word)
+```python
+# input: words.bin; output: merges (65264 rules), vocab (65536)
+vocab  = special_tokens(31) + alphabet_of_bytes_present_in_corpus(241)
+merges = []
+tokens = {word: list_of_byte_symbols(word) for word in word_count}
 
-while len(vocab) < vocab_size:         # 65536 -> exactly 65264 merges
-    # pick the most frequent pair; ties: smaller token-id pair wins
-    (a, b) = argmax pair_count         # skip if count < min_frequency (2)
+pair_count   = count_all_adjacent_pairs(tokens, weighted_by=word_count)  # i32!
+pair_to_word = index pairs -> words containing them
 
-    new = concat(a, b)                 # the merged symbol, e.g. "Ġ" + "t" = "Ġt"
-    vocab.add(new, id = next_id)
-    merges.append([a, b])              # the rule, in learning order
+while len(vocab) < 65536:
+    (a, b) = argmax(pair_count)        # ties: smaller token-id pair wins
+    if pair_count[(a, b)] < 2: break   # min_frequency
 
-    # apply the merge ONLY to words that contain the pair (incremental update)
-    for word in pair_to_words[(a, b)]:
-        for each adjacent position where (a, b) occurs in tokens[word]:
-            # a pair at the boundary affects its neighbours:
-            pair_count[(left, a)] -= cnt       # old neighbour pair dies
-            pair_count[(b, right)] -= cnt
-            pair_count[(left, new)] += cnt     # new neighbour pairs appear
-            pair_count[(new, right)] += cnt
-        tokens[word] = merge tokens[word] at (a, b) -> new
+    new = a + b                        # e.g. "Ġ" + "t" -> "Ġt"
+    vocab.append(new); merges.append((a, b))
 
-    if merge_index % 100 == 0: checkpoint(merges, vocab)   # crash-safe resume
+    for word in pair_to_word[(a, b)]:  # only words containing the pair
+        update_neighbour_pair_counts(word)   # pairs touching (a,b) get
+        tokens[word] = merge(tokens[word], a, b, new)  # remeasured; others untouched
+
+    if len(merges) % 100 == 0:
+        save_checkpoint(merges, vocab)  # merges_N.bin; resume replays from here
 ```
 
-After the loop: write `tokenizer.json` (vocab + merges + normalizer /
-pre-tokenizer / decoder config) and `config.json`.
+Checkpoint interval justification: the loop does **65264 merges** at ~250–500
+merges/s on our hardware (measured: full loop in 1–4.5 min), so a checkpoint
+every 100 merges costs a ~1 MB write every fraction of a second (~700 MB total
+over a run) and bounds crash-recovery loss to <1 s of work. The format:
 
-## Worked micro-example
-
-Corpus: `"the cat"` ×5, `"the car"` ×3. After phase 1 (per word, byte-level
-symbols; `Ġ` = space):
-
-```text
-word_count:  Ġthe:(Ġ,t,h,e)x8   Ġcat:(Ġ,c,a,t)x5   Ġcar:(Ġ,c,a,r)x3
+```
+u32 magic "MBI1"
+u64 n_vocab; n_vocab × { u32 len | bytes }      # vocab in id order
+u64 n_merges; n_merges × { u32 id_a | u32 id_b } # merge rules in learning order
 ```
 
-Merge loop:
+## Inference (encoding with the trained tokenizer)
 
-| step | most frequent pair | count | new token | merges |
-|---|---|---|---|---|
-| 1 | (Ġ, t) | 8 | `Ġt` | `[["Ġ","t"]]` |
-| 2 | (Ġt, h) | 8 | `Ġth` | + `[["Ġt","h"]]` |
-| 3 | (Ġth, e) | 8 | `Ġthe` | + `[["Ġth","e"]]` |
-| 4 | (Ġ, c) | 8 | `Ġc` | … |
-| 5 | (Ġc, a) | 8 | `Ġca` | … |
-| 6 | (c, a)... pair counts drop below neighbours; continues until vocab_size or min_frequency |
+```python
+# input: tokenizer.json, raw text; output: token ids (uint16 — vocab is 65536)
+merges_rank = {pair: rank for rank, pair in enumerate(merges)}  # rank = learning order
 
-Encoding `"the car"` afterwards: split → `the`, `Ġcar`; apply merge rules in
-order → `Ġthe`, `Ġcar` — two tokens. A rare word like `"zebra"` gets no
-merges and falls back to bytes: `z e b r a`.
+def encode(text):
+    text = NFC(text)
+    ids = []
+    for piece in split_special_tokens(text):       # "<|direct|>" -> its own id
+        if piece is special: ids.append(special_id(piece)); continue
+        for word in regex_split(piece):
+            symbols = byte_level_symbols(word)     # one symbol per byte
+            while True:                            # greedy: always merge the
+                best = argmin over adjacent pairs of merges_rank  # earliest-learned rule
+                if no adjacent pair is a known merge: break
+                symbols = merge(symbols, best)
+            ids += [vocab_id(s) for s in symbols]
+    return ids                                     # fits uint16: max id 65535
+```
 
-## Complexity / cost notes
+Key point: encoding applies the learned rules **in the order they were
+learned** (lowest rank first), which is what makes it deterministic and equal
+to training-time segmentation.
 
-- Phase 1 is O(corpus size), parallel over files; memory = unique words.
-- Phase 2 with the incremental update is O(tokens) once + O(words touching
-  the pair) per merge — this is why our trainers finish 65264 merges in
-  ~1 minute. A naive re-count over the whole corpus per merge would take days.
-- `pair_to_words` is the index that makes merges cheap; checkpoints every 100
-  merges make the loop resumable (resume replays merges onto words and
-  recounts pairs).
-- Exact parity with the reference (`tokenizers` crate) requires replicating
-  its quirks: wrapping **i32** pair counts (pairs above 2.1B occurrences
-  overflow and never get merged — see [gotchas.md](gotchas.md)), corpus-present
-  alphabet (241 of 256 byte symbols on our corpus), and tie-break by token-id
-  pair.
+## Measured compression (this tokenizer, this corpus)
+
+Tokens are uint16 (2 bytes). Bytes/token and storage ratio (2 bytes × tokens /
+input bytes), measured per dataset:
+
+| dataset | bytes/token | uint16 size / raw text size |
+|---|---|---|
+| SYNTH | 4.96 | 0.40 |
+| flan | 3.73 | 0.54 |
+| gsm8k | 3.49 | 0.57 |
+| openmathinstruct2 | 2.71 | 0.74 |
+| dmmath | 1.69 | **1.19** (short symbolic lines compress poorly — uint16 output is *larger* than the text) |
+
+So "compression" ranges from 2.5× (prose) to negative (symbolic math). The
+uint16 choice matters: with the authors' int32 fallback all ratios above
+double. (Corpus-wide token counts: see `scripts/docs/token_counts.md`.)
+
+## Incremental training (new data arrives — retrain from scratch?)
+
+**Is BPE permutation-invariant?** The word *counts* are (order of documents
+does not matter for phase 1). The *merge sequence* is not: it is a greedy
+path — each merge depends on all previous ones.
+
+**train(A) then continue on B  vs  train(A ∪ B) from scratch — same result?**
+No. Once merges 1..N are learned from A, they are frozen; training on B can
+only choose *subsequent* merges. A fresh run on A ∪ B would re-evaluate every
+pair with combined counts and can pick different merges from the very first
+one. Continuing on B therefore yields a vocabulary skewed toward A; how much
+worse depends on how similar B is to A.
+
+**Does the current code support it?** Partially: `words.bin` is just counts —
+counts for new data can be added (a `--phase load` over the new files, then
+summing the maps), and `--phase train` resumes from any merge checkpoint. So
+"train on A, later add B's counts, continue merging" is implementable from the
+existing checkpoints. What is *not* possible is revising already-committed
+merges.
+
+**Is it justified here?** No. A full retrain costs ~35 min / a couple of
+dollars (see [benchmarks.md](benchmarks.md)); vocabulary drift between model
+checkpoints costs far more than that. Recommendation: retrain from scratch on
+A ∪ B. Incremental continuation is only worth it when retraining is truly
+expensive and the vocab shift is acceptable.
+
+## Parity-relevant quirks (replicated bug-for-bug)
+
+For byte-identical output with the reference `tokenizers` crate, the merge
+loop keeps: wrapping **i32** pair counts (pairs above 2.15B occurrences wrap
+negative and are never merged — our corpus has such pairs), an alphabet of
+only the 241 byte symbols actually present, and tie-breaks by token-id pair.
+Details: [gotchas.md](gotchas.md).

@@ -1,7 +1,7 @@
 FROM gcc:13 AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    cmake pkg-config libpcre2-dev \
+    cmake pkg-config libpcre2-dev libutf8proc-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -12,7 +12,8 @@ RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpcre2-8-0 \
+    libpcre2-8-0 libutf8proc2 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /build/build/train_tokenizer_cpp /usr/local/bin/train_tokenizer_cpp
+COPY --from=build /build/build/count_tokens /usr/local/bin/count_tokens
 WORKDIR /workspace
