@@ -5,6 +5,8 @@ normalizer, GPT-2-style pre-tokenizer regex, 31 special tokens (ids 0..30).
 
 Subpages:
 
+- [bpe_algorithm.md](bpe_algorithm.md) — BPE training in pseudocode for a
+  reader unfamiliar with BPE: inputs, outputs, what happens inside
 - [pipeline.md](pipeline.md) — how to run: download → clean → stage to NVMe →
   train; inputs/outputs; checkpoint & resume semantics of the iterative trainer
 - [benchmarks.md](benchmarks.md) — measured timings/memory (48 cores, 251G RAM)
