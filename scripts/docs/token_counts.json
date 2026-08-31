@@ -1,0 +1,138 @@
+{
+  "generated": "2026-08-31",
+  "tokenizer": "/mnt/hdd2/models/HRM-Text/tokenizers/iterative/bpe/tokenizer.json",
+  "vocab_size": 65536,
+  "note": "instruction and response counted as separate docs; no truncation, no sampling limits; rows = docs/2",
+  "datasets": {
+    "acereason": {
+      "rows": 2668741,
+      "tokens": 1855873376,
+      "tokens_per_row": 695.4
+    },
+    "amps_khan": {
+      "rows": 103059,
+      "tokens": 29816227,
+      "tokens_per_row": 289.3
+    },
+    "ampsmathematica": {
+      "rows": 4830500,
+      "tokens": 752880703,
+      "tokens_per_row": 155.9
+    },
+    "arb": {
+      "rows": 901,
+      "tokens": 380726,
+      "tokens_per_row": 422.6
+    },
+    "dmmath": {
+      "rows": 111999888,
+      "tokens": 4451381223,
+      "tokens_per_row": 39.7
+    },
+    "flan": {
+      "rows": 377759274,
+      "tokens": 137912038523,
+      "tokens_per_row": 365.1
+    },
+    "gsm8k_train": {
+      "rows": 7473,
+      "tokens": 509350,
+      "tokens_per_row": 68.2
+    },
+    "math_train": {
+      "rows": 14996,
+      "tokens": 2896050,
+      "tokens_per_row": 193.1
+    },
+    "natural_reasoning": {
+      "rows": 770141,
+      "tokens": 97520016,
+      "tokens_per_row": 126.6
+    },
+    "no_robots": {
+      "rows": 10000,
+      "tokens": 3048633,
+      "tokens_per_row": 304.9
+    },
+    "numinamath": {
+      "rows": 811921,
+      "tokens": 245826520,
+      "tokens_per_row": 302.8
+    },
+    "omnimath": {
+      "rows": 8856,
+      "tokens": 2685324,
+      "tokens_per_row": 303.2
+    },
+    "openbookqa": {
+      "rows": 5457,
+      "tokens": 471264,
+      "tokens_per_row": 86.4
+    },
+    "openmathinstruct2": {
+      "rows": 25023023,
+      "tokens": 6426087984,
+      "tokens_per_row": 256.8
+    },
+    "openthoughts2": {
+      "rows": 892168,
+      "tokens": 514794793,
+      "tokens_per_row": 577.0
+    },
+    "principia_collection": {
+      "rows": 554399,
+      "tokens": 230404513,
+      "tokens_per_row": 415.6
+    },
+    "reclor": {
+      "rows": 5138,
+      "tokens": 1166111,
+      "tokens_per_row": 227.0
+    },
+    "scibench": {
+      "rows": 867,
+      "tokens": 125681,
+      "tokens_per_row": 145.0
+    },
+    "scienceqa": {
+      "rows": 20642,
+      "tokens": 5971249,
+      "tokens_per_row": 289.3
+    },
+    "sudoku_extreme": {
+      "rows": 3831994,
+      "tokens": 647606986,
+      "tokens_per_row": 169.0
+    },
+    "synth": {
+      "rows": 60934844,
+      "tokens": 22271708461,
+      "tokens_per_row": 365.5
+    },
+    "tasksource": {
+      "rows": 2363550,
+      "tokens": 296630020,
+      "tokens_per_row": 125.5
+    },
+    "textbookreasoning": {
+      "rows": 1178449,
+      "tokens": 352828879,
+      "tokens_per_row": 299.4
+    },
+    "theoremqa": {
+      "rows": 747,
+      "tokens": 53677,
+      "tokens_per_row": 71.9
+    },
+    "webinstruct_verified": {
+      "rows": 228736,
+      "tokens": 22930220,
+      "tokens_per_row": 100.2
+    }
+  },
+  "total": {
+    "rows": 594025764,
+    "tokens": 176125636509,
+    "tokens_per_row": 296.5
+  }
+}

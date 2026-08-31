@@ -60,3 +60,34 @@ CPU/RAM requirements, stated explicitly:
   cores only help the parallel pair-count init and word replay on resume.
 - RAM: **≥ 70G** for the iterative trainer, **≥ 300G** for the baseline (or
   accept ~220G of swap and the slowdown).
+
+## Token counting stage (C++ `count_tokens` over the full corpus)
+
+Corpus-wide token counting with the trained tokenizer
+(`scripts/count_tokens.sh`: parquet/jsonl → .tokbin staging → C++ encode+count
+→ `scripts/docs/token_counts.json`). Measured 2026-09-01 on the full corpus
+(594,025,764 rows → 1,188,051,528 docs, 632 GiB text):
+
+| stage | time | rate | peak RAM | notes |
+|---|---|---|---|---|
+| staging → .tokbin | ~2.7 min (warm) / ~4 min (cold flan) | ~2.6 GiB/s | bounded (streaming) | 626 GiB intermediate on NVMe |
+| count (48 threads) | **31.5 min** | 0.33 GiB/s ≈ **93.2M tokens/s** | 170 GiB (≈all mmap page cache; heap is a few GiB) | uint16 token ids |
+| aggregate | seconds | — | — | |
+
+Total wall: **~34 min**. Result: **176,125,636,509 tokens**
+(`scripts/docs/token_counts.md`, per-dataset table + TOTAL row; the paper's
+"40B unique tokens" is the sampled training mix, this count is the raw
+unsampled corpus).
+
+Encoder throughput (`count_tokens --bench`, tokens/s, 1-thread / 48-thread):
+~100-char docs: 4.8M / 17.0M; ~1k chars: 6.6M / 54.1M; ~10k chars: 6.2M /
+68.6M. Optimization history on a 13 GiB probe: 3.8 min (PCRE2 interpreter) →
+1.3 min (PCRE2 JIT) → 0.75 min (hand-rolled scanner + mmap + uint16).
+Validated per-doc against python `tokenizers` 0.23.1 (exact match).
+
+Cloud cost for this stage: CPU-bound, so core count drives time:
+`cost ≈ price/hr × 31.5 min × (48 / cores)`. Examples: c7i.12xlarge (48 vCPU,
+~$2.14/hr) ≈ **$1.1**; c7i.4xlarge (16 vCPU, ~$0.71/hr) ≈ **$1.1** in ~1.6 h.
+Disk: ~650G NVMe scratch for .tokbin (instance storage, e.g. i4i/c7i+d, or
+stream without staging to skip it). RAM: any (page cache only; cap with
+`--memory` if needed).

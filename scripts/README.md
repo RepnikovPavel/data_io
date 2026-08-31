@@ -32,6 +32,18 @@ nohup ./scripts/train_tokenizer.sh /mnt/hdd2/datasets_text_transformed/HRM-Text 
 ./scripts/test_tokenizer_parity.sh /mnt/hdd2/models/HRM-Text/tokenizers/original/bpe/tokenizer.json /mnt/hdd2/models/HRM-Text/tokenizers/iterative/bpe/tokenizer.json /mnt/hdd2/models/HRM-Text/tokenizers/cpp/bpe/tokenizer.json
 ```
 
+## Count tokens over the corpus (C++ encoder)
+
+```bash
+./scripts/count_tokens.sh ~/hrm_text_tokenizer_cache scripts/docs
+```
+
+Stages the corpus to `~/hrm_text_tokbin/*.tokbin` (resumable), counts with
+`count_tokens` (C++, tokenizer_cpp image), writes `scripts/docs/token_counts.{json,md}`.
+Self-test (C++ encoder vs python `tokenizers`, per-doc exact):
+`./scripts/test_count_tokens.sh`. Throughput table:
+`docker run --rm -v ~/hrm_text_tokbin:/t -v /mnt/hdd2/models:/m hrm_text_tokenizer_cpp_image count_tokens --tokenizer /m/HRM-Text/tokenizers/iterative/bpe/tokenizer.json --bench /t/data_clustered/flan/dialog_fsopt_data__wiki_dialog.tokbin`
+
 ## Clean (всё по очереди)
 
 ```bash

@@ -6,7 +6,9 @@ purpose (informed by the dataset card), raw storage layout with precise types
 counts, keyword tables (categorical fields with real value counts), and real
 before/after example records rendered in the storage's own format (tables for
 parquet/arrow rows, raw lines for JSONL/txt/CSV). Also writes
-scripts/docs/README.md as the navigable index.
+scripts/docs/README.md as the navigable index. If scripts/docs/token_counts.json
+exists (produced by scripts/count_tokens.sh), the README index table gains a
+`tokens` column with a TOTAL row, plus a link to token_counts.md.
 
 Datasets whose output does not exist yet are skipped (re-runnable).
 Run inside hrm_text_clean_image:
@@ -2033,14 +2035,36 @@ def render_readme(generated):
     lines.append("")
     lines.append("## Datasets")
     lines.append("")
-    lines.append("| dataset | created | domain | source | condition tags | rows | doc |")
-    lines.append("|---|---|---|---|---|---|---|")
+    # If the token-count stage has run, add a tokens column + TOTAL row.
+    token_counts = None
+    tc_path = os.path.join(DOCS_DIR, "token_counts.json")
+    if os.path.isfile(tc_path):
+        with open(tc_path) as f:
+            token_counts = json.load(f)
+        lines.append("Token counts per dataset (instruction+response, full "
+                     "corpus, no truncation/sampling): "
+                     "[token_counts.md](token_counts.md).")
+        lines.append("")
+    if token_counts:
+        lines.append("| dataset | created | domain | source | condition tags | rows | tokens | doc |")
+        lines.append("|---|---|---|---|---|---|---|---|")
+    else:
+        lines.append("| dataset | created | domain | source | condition tags | rows | doc |")
+        lines.append("|---|---|---|---|---|---|---|")
     for entry in generated:
         tags = ", ".join(f"`{c}`" for c in entry["conditions"])
-        lines.append(f"| {entry['name']} | {entry['created']} | "
-                     f"{entry['domain']} | {entry['source']} | {tags} | "
-                     f"{fmt_rows(entry['_total'])} | "
-                     f"[{entry['name']}.md]({entry['name']}.md) |")
+        row = (f"| {entry['name']} | {entry['created']} | "
+               f"{entry['domain']} | {entry['source']} | {tags} | "
+               f"{fmt_rows(entry['_total'])} |")
+        if token_counts:
+            tc = token_counts["datasets"].get(entry["name"])
+            row += f" {tc['tokens']:,} |" if tc else " ? |"
+        row += f" [{entry['name']}.md]({entry['name']}.md) |"
+        lines.append(row)
+    if token_counts:
+        t = token_counts["total"]
+        lines.append(f"| **TOTAL** |  |  |  |  | **{t['rows']:,}** | "
+                     f"**{t['tokens']:,}** |  |")
     lines.append("")
     skipped = [e["name"] for e in REGISTRY if e not in generated]
     if skipped:

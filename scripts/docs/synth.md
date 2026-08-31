@@ -28,7 +28,7 @@ Fields read by the transform (types derived from the actual files):
 
 ## After (transformed)
 
-- Location: `data_clustered/synth/*.parquet` (under `/mnt/hdd2/datasets_text_transformed/HRM-Text`; 500 file(s))
+- Location: `data_clustered/SYNTH/*.parquet` (under `/mnt/hdd2/datasets_text_transformed/HRM-Text`; 500 file(s))
 - Storage: parquet; columns `instruction`, `response`, `condition`
 - Rows: 60,934,844
 
@@ -168,7 +168,7 @@ One raw row with this value (same storage as above), shown as a table:
 
 ### Transformed — condition=`synth,cot`
 
-One row of `data_clustered/synth/synth_001.parquet` (parquet table, columns: `instruction`, `condition`, `response`), shown as a table:
+One row of `data_clustered/SYNTH/synth_001.parquet` (parquet table, columns: `instruction`, `condition`, `response`), shown as a table:
 
 | instruction | condition | response |
 |---|---|---|
@@ -176,7 +176,7 @@ One row of `data_clustered/synth/synth_001.parquet` (parquet table, columns: `in
 
 ### Transformed — condition=`synth,direct`
 
-One row of `data_clustered/synth/synth_001.parquet` (parquet table, columns: `instruction`, `condition`, `response`), shown as a table:
+One row of `data_clustered/SYNTH/synth_001.parquet` (parquet table, columns: `instruction`, `condition`, `response`), shown as a table:
 
 | instruction | condition | response |
 |---|---|---|

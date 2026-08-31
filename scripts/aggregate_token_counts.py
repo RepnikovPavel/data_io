@@ -18,7 +18,8 @@ def dataset_key(rel):
     """Same mapping as count_tokens.cpp: registry dataset name from relpath."""
     parts = rel.split("/")
     if parts[0] == "data_clustered" and len(parts) >= 2:
-        return parts[1]
+        # registry name in scripts/docs/generate_docs.py is lowercase
+        return "synth" if parts[1] == "SYNTH" else parts[1]
     stem = os.path.splitext(parts[-1])[0]
     if len(parts) >= 3 and parts[0] == "data" and parts[1] == "Platypus" \
             and stem.startswith("arb_"):

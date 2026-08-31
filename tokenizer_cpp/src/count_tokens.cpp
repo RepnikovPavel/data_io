@@ -177,7 +177,11 @@ std::string dataset_key(const std::string& rel) {
             parts.push_back(rel.substr(start, i - start));
             start = i + 1;
         }
-    if (parts.size() >= 2 && parts[0] == "data_clustered") return parts[1];
+    if (parts.size() >= 2 && parts[0] == "data_clustered") {
+        // Registry name in scripts/docs/generate_docs.py is lowercase.
+        if (parts[1] == "SYNTH") return "synth";
+        return parts[1];
+    }
     std::string stem = parts.back();
     if (auto dot = stem.rfind('.'); dot != std::string::npos) stem.resize(dot);
     if (parts.size() >= 3 && parts[0] == "data" && parts[1] == "Platypus" &&
@@ -186,10 +190,108 @@ std::string dataset_key(const std::string& rel) {
     return stem;
 }
 
+// --- throughput benchmark mode ----------------------------------------------
+// `count_tokens --tokenizer T --bench <file.tokbin>`: encode docs from the
+// file (bucketed by length: ~100 / ~1k / ~10k chars), single-threaded and
+// all-threads, and print a tokens/sec + MiB/s table. Encoder warm-up (word
+// cache fill) is included, matching real corpus conditions.
+struct TokbinDoc { uint64_t off; uint32_t len; };
+
+int run_bench(const std::string& tok_path, const encoder::Encoder& proto, unsigned nthreads) {
+    int fd = open(tok_path.c_str(), O_RDONLY);
+    if (fd < 0) throw std::runtime_error("cannot open " + tok_path);
+    struct stat st;
+    if (fstat(fd, &st) != 0) throw std::runtime_error("cannot stat " + tok_path);
+    size_t fsize = (size_t)st.st_size;
+    const char* base = (const char*)mmap(nullptr, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (base == MAP_FAILED) throw std::runtime_error("mmap failed: " + tok_path);
+    madvise((void*)base, fsize, MADV_WILLNEED);
+    uint64_t n_docs;
+    memcpy(&n_docs, base + 4, 8);
+    size_t pos = 28;
+    std::vector<TokbinDoc> docs;
+    docs.reserve(n_docs);
+    for (uint64_t i = 0; i < n_docs; ++i) {
+        uint32_t len;
+        memcpy(&len, base + pos, 4);
+        pos += 4;
+        docs.push_back({pos, len});
+        pos += len;
+    }
+
+    // Length buckets: [50,200) ~100 chars, [500,2000) ~1k, [5000,20000) ~10k.
+    const struct { const char* name; uint32_t lo, hi; } buckets[] = {
+        {"~100 chars", 50, 200}, {"~1k chars", 500, 2000}, {"~10k chars", 5000, 20000},
+    };
+    printf("\n[bench] %s (%llu docs, %.2f GiB), %u threads\n", tok_path.c_str(),
+           (unsigned long long)n_docs, fsize / 1073741824.0, nthreads);
+    printf("%-12s %9s %10s %10s | %14s %12s | %14s %12s\n", "bucket", "docs", "MiB", "tokens",
+           "1-thread tok/s", "MiB/s", "all-threads tok/s", "MiB/s");
+    printf("------------------------------------------------------------------------------------------\n");
+    for (const auto& [name, lo, hi] : buckets) {
+        // Up to 2000 evenly spaced docs in the length band.
+        std::vector<TokbinDoc> sample;
+        for (const auto& d : docs)
+            if (d.len >= lo && d.len < hi) sample.push_back(d);
+        if (sample.size() > 2000) {
+            std::vector<TokbinDoc> thinned;
+            double step = (double)sample.size() / 2000;
+            for (size_t i = 0; i < 2000; ++i) thinned.push_back(sample[(size_t)(i * step)]);
+            sample = std::move(thinned);
+        }
+        if (sample.empty()) {
+            printf("%-12s %9s\n", name, "(none)");
+            continue;
+        }
+        uint64_t bytes = 0;
+        for (const auto& d : sample) bytes += d.len;
+
+        auto timed = [&](unsigned threads) -> std::pair<double, uint64_t> {
+            std::vector<encoder::Encoder> encs;
+            for (unsigned t = 0; t < threads; ++t) encs.push_back(proto.clone_shallow());
+            std::atomic<uint64_t> tokens{0};
+            auto t0 = std::chrono::steady_clock::now();
+            if (threads == 1) {
+                uint64_t sum = 0;
+                for (const auto& d : sample)
+                    sum += encs[0].encode_count(std::string_view(base + d.off, d.len));
+                tokens = sum;
+            } else {
+                std::vector<std::thread> pool;
+                size_t chunk = (sample.size() + threads - 1) / threads;
+                for (unsigned t = 0; t < threads; ++t) {
+                    size_t b = t * chunk, e = std::min(sample.size(), b + chunk);
+                    if (b >= e) break;
+                    pool.emplace_back([&, t, b, e] {
+                        uint64_t sum = 0;
+                        for (size_t i = b; i < e; ++i)
+                            sum += encs[t].encode_count(
+                                std::string_view(base + sample[i].off, sample[i].len));
+                        tokens.fetch_add(sum);
+                    });
+                }
+                for (auto& th : pool) th.join();
+            }
+            double secs =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            return {secs, tokens.load()};
+        };
+
+        auto [s1, t1] = timed(1);
+        auto [sn, tn] = timed(nthreads);
+        printf("%-12s %9zu %10.1f %10llu | %14.0f %12.1f | %14.0f %12.1f\n", name,
+               sample.size(), bytes / 1048576.0, (unsigned long long)t1, t1 / s1,
+               bytes / 1048576.0 / s1, tn / sn, bytes / 1048576.0 / sn);
+    }
+    munmap((void*)base, fsize);
+    close(fd);
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string tokenizer_path, out_path;
+    std::string tokenizer_path, out_path, bench_path;
     bool per_doc = false;
     unsigned nthreads = std::thread::hardware_concurrency();
     std::vector<std::string> roots;
@@ -203,10 +305,12 @@ int main(int argc, char** argv) {
         else if (a == "-o" || a == "--out") out_path = next("-o");
         else if (a == "--threads") nthreads = std::stoul(next("--threads"));
         else if (a == "--per-doc") per_doc = true;
+        else if (a == "--bench") bench_path = next("--bench");
         else roots.push_back(a);
     }
-    if (tokenizer_path.empty() || roots.empty()) {
-        fprintf(stderr, "usage: count_tokens --tokenizer <tokenizer.json> -o <out.tsv> [--threads N] <root-or-file>...\n");
+    if (tokenizer_path.empty() || (roots.empty() && bench_path.empty())) {
+        fprintf(stderr, "usage: count_tokens --tokenizer <tokenizer.json> -o <out.tsv> [--threads N] <root-or-file>...\n"
+                        "       count_tokens --tokenizer <tokenizer.json> --bench <file.tokbin>\n");
         return 1;
     }
     if (per_doc) nthreads = 1;
@@ -214,6 +318,8 @@ int main(int argc, char** argv) {
 
     try {
         encoder::Encoder proto(tokenizer_path);
+        if (!bench_path.empty())
+            return run_bench(bench_path, proto, nthreads);
         fprintf(per_doc ? stderr : stdout, "[count] tokenizer loaded from %s\n",
                 tokenizer_path.c_str());
 

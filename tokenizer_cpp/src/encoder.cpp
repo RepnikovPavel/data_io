@@ -61,12 +61,16 @@ Encoder::Encoder(const std::string& tokenizer_json_path) {
 
     // byte-level alphabet: single-char vocab entries -> byte
     const auto b2u = bytelevel::bytes_to_unicode_table();
-    t->byte_id.assign(256, UINT32_MAX);
+    t->byte_id.assign(256, UINT16_MAX);
     for (uint32_t b = 0; b < 256; ++b) {
         std::string ch;
         bytelevel::encode_utf8(b2u[b], ch);
         auto it = vocab.find(ch);
-        if (it != vocab.end()) t->byte_id[b] = it->second;
+        if (it != vocab.end()) {
+            if (it->second > 65534)
+                throw std::runtime_error("alphabet id unexpectedly high");
+            t->byte_id[b] = (uint16_t)it->second;
+        }
     }
 
     // special tokens (added_tokens, ordered by id)
@@ -108,17 +112,17 @@ Encoder::~Encoder() {
 uint64_t Encoder::count_word(std::string_view word) {
     if (auto it = cache_.find(word); it != cache_.end()) return it->second;
 
-    std::vector<uint32_t>& toks = scratch_;  // reused buffer (no per-word alloc)
+    std::vector<uint16_t>& toks = scratch_;  // reused buffer (no per-word alloc)
     toks.clear();
     toks.reserve(word.size());
     for (unsigned char b : word) {
-        uint32_t id = t_->byte_id[b];
-        if (id != UINT32_MAX) toks.push_back(id);  // unknown byte: dropped (no unk/fallback)
+        uint16_t id = t_->byte_id[b];
+        if (id != UINT16_MAX) toks.push_back(id);  // unknown byte: dropped (no unk/fallback)
     }
     // Greedy lowest-rank merge loop (standard BPE application).
     while (toks.size() > 1) {
         uint64_t best = UINT64_MAX;  // packed (rank << 32) | new_id
-        uint32_t ba = 0, bb = 0;
+        uint16_t ba = 0, bb = 0;
         for (size_t i = 0; i + 1 < toks.size(); ++i) {
             auto it = t_->merge_rank.find(((uint64_t)toks[i] << 32) | toks[i + 1]);
             if (it != t_->merge_rank.end() && it->second < best) {
@@ -128,7 +132,7 @@ uint64_t Encoder::count_word(std::string_view word) {
             }
         }
         if (best == UINT64_MAX) break;
-        uint32_t new_id = (uint32_t)best;
+        uint16_t new_id = (uint16_t)best;
         size_t w = 0;
         for (size_t i = 0; i < toks.size();) {
             if (i + 1 < toks.size() && toks[i] == ba && toks[i + 1] == bb) {
