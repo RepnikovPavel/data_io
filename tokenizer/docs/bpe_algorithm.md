@@ -56,6 +56,12 @@ save words.bin                        # {word_symbols: count}, sorted
 Notes:
 - The corpus is never kept in memory in this phase — only *unique* words with
   counts survive (12.1M unique words for our corpus).
+- `first_10000_chars` (`--truncate-len`, default 10 000) cuts only the tails of
+  very long documents, and only for tokenizer *training* (the model-training
+  data is not truncated). Measured on our corpus: 0.37% of documents affected
+  (mostly long SYNTH answers), ≈0.2% of characters lost. Rationale: BPE merge
+  statistics need frequent patterns, not rare long tails; 10k chars ≈ well
+  beyond the 4096-token training context.
 - Everything downstream works on **weighted words**: a word with count 1000
   counts as 1000 occurrences when we count pairs.
 
