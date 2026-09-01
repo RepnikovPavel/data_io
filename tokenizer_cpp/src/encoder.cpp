@@ -25,6 +25,18 @@ static const char* kSplitRegex =
 
 // Split implementation: default = hand-rolled scanner (splitter.h);
 // COUNT_SPLIT=pcre2 forces the PCRE2 regex path (used for differential tests).
+// TEMP profiling hooks (COUNT_ABLATE=scan|cache).
+static int ablate_mode() {
+    static int v = [] {
+        const char* e = getenv("COUNT_ABLATE");
+        if (!e) return 0;
+        if (std::string(e) == "scan") return 1;   // specials+NFC+split, no word counting
+        if (std::string(e) == "cache") return 2;  // + byte map, no merge loop
+        return 0;
+    }();
+    return v;
+}
+
 static bool use_scanner() {
     static bool v = [] {
         const char* e = getenv("COUNT_SPLIT");
@@ -110,7 +122,7 @@ Encoder::~Encoder() {
 // Steps 3-4 for one regex word (raw bytes): ByteLevel map + greedy rank
 // merges. Memoized; the lookup is by string_view (no allocation on hit).
 uint64_t Encoder::count_word(std::string_view word) {
-    if (auto it = cache_.find(word); it != cache_.end()) return it->second;
+    if (uint64_t c = cache_.get(word); c != UINT64_MAX) return c;
 
     std::vector<uint16_t>& toks = scratch_;  // reused buffer (no per-word alloc)
     toks.clear();
@@ -120,7 +132,7 @@ uint64_t Encoder::count_word(std::string_view word) {
         if (id != UINT16_MAX) toks.push_back(id);  // unknown byte: dropped (no unk/fallback)
     }
     // Greedy lowest-rank merge loop (standard BPE application).
-    while (toks.size() > 1) {
+    while (ablate_mode() < 2 && toks.size() > 1) {  // TEMP ablate
         uint64_t best = UINT64_MAX;  // packed (rank << 32) | new_id
         uint16_t ba = 0, bb = 0;
         for (size_t i = 0; i + 1 < toks.size(); ++i) {
@@ -146,21 +158,29 @@ uint64_t Encoder::count_word(std::string_view word) {
         toks.resize(w);
     }
     uint64_t n = toks.size();
-    cache_.emplace(std::string(word), n);
+    cache_.put(word, n);
     return n;
 }
 
-// Steps 2-4 for a non-special span: NFC (utf8proc; skipped for pure ASCII)
-// + regex split + count.
-uint64_t Encoder::count_span(const char* data, size_t len) {
+// Steps 2-4 for a non-special span, PCRE2 reference path (differential
+// testing; COUNT_SPLIT=pcre2): NFC (utf8proc; skipped for pure ASCII) +
+// regex split + count.
+uint64_t Encoder::count_span_pcre2(const char* data, size_t len) {
     if (len == 0) return 0;
-    // NFC fast path: ASCII-only spans are NFC-stable.
+    // NFC fast path: ASCII-only spans are NFC-stable. Word-at-a-time high-bit
+    // check (8 bytes per step).
     bool ascii = true;
-    for (size_t i = 0; i < len; ++i)
-        if ((unsigned char)data[i] >= 0x80) {
+    size_t k = 0;
+    for (; k + 8 <= len; k += 8) {
+        uint64_t v;
+        memcpy(&v, data + k, 8);
+        if (v & 0x8080808080808080ull) {
             ascii = false;
             break;
         }
+    }
+    for (; ascii && k < len; ++k)
+        if ((unsigned char)data[k] >= 0x80) ascii = false;
 
     utf8proc_uint8_t* nfc = nullptr;
     const char* text = data;
@@ -174,18 +194,6 @@ uint64_t Encoder::count_span(const char* data, size_t len) {
         text_len = (size_t)r;
     }
     uint64_t total = 0;
-    if (use_scanner()) {
-        // Default: hand-rolled scanner (see splitter.h; exactly the PCRE2
-        // semantics, ~100x faster). COUNT_SPLIT=pcre2 forces the regex path.
-        size_t i = 0;
-        while (i < text_len) {
-            size_t e = splitter::match_at(text, text_len, i);
-            total += count_word(std::string_view(text + i, e - i));
-            i = e;
-        }
-        if (nfc) free(nfc);
-        return total;
-    }
     PCRE2_SIZE offset = 0;
     auto* md = (pcre2_match_data_8*)md_;
     auto* re = (pcre2_code_8*)t_->re;
@@ -205,29 +213,83 @@ uint64_t Encoder::count_span(const char* data, size_t len) {
     return total;
 }
 
+// Fused single pass (scanner mode): specials matched in-place on the raw
+// text, split via the hand-rolled scanner, non-ASCII detection folded in
+// (word-level: a word containing a byte >= 0x80 triggers an NFC redo of the
+// whole span — exact reference behavior since specials are pure ASCII and
+// the NFC'd redo re-matches them identically).
+uint64_t Encoder::count_span_fused(const char* data, size_t len, bool nfc_done) {
+    uint64_t total = 0;
+    size_t i = 0;
+    while (i < len) {
+        char c = data[i];
+        if (c == '<') {
+            size_t best_len = 0;
+            for (const auto& sp : t_->specials)
+                if (sp.size() > best_len && len - i >= sp.size() &&
+                    memcmp(data + i, sp.data(), sp.size()) == 0)
+                    best_len = sp.size();
+            if (best_len) {
+                total += 1;  // special token, counts as 1
+                i += best_len;
+                continue;
+            }
+        }
+        if (!nfc_done && (unsigned char)c >= 0x80) return UINT64_MAX;  // signal: needs NFC
+        size_t e = splitter::match_at(data, len, i);
+        std::string_view w(data + i, e - i);
+        if (!nfc_done)
+            for (char wc : w)
+                if ((unsigned char)wc >= 0x80) return UINT64_MAX;  // needs NFC
+        if (ablate_mode() == 1) total += w.size();  // TEMP ablate: skip counting
+        else total += count_word(w);
+        i = e;
+    }
+    return total;
+}
+
+uint64_t Encoder::count_span(const char* data, size_t len) {
+    if (len == 0) return 0;
+    uint64_t total = count_span_fused(data, len, false);
+    if (total != UINT64_MAX) return total;
+    // NFC needed: redo the whole span on the NFC'd text (rare path).
+    utf8proc_uint8_t* nfc = nullptr;
+    utf8proc_size_t r = utf8proc_map((const utf8proc_uint8_t*)data, (utf8proc_size_t)len, &nfc,
+                                     (utf8proc_option_t)(UTF8PROC_STABLE | UTF8PROC_COMPOSE));
+    if (!nfc || r < 0) throw std::runtime_error("utf8proc NFC failed");
+    total = count_span_fused((const char*)nfc, (size_t)r, true);
+    free(nfc);
+    return total;
+}
+
 uint64_t Encoder::encode_count(std::string_view text) {
-    // Step 1: split out special tokens (all ours start with '<'; leftmost,
-    // longest-at-position match), each special counts as exactly 1 token.
+    if (use_scanner()) {
+        // Default: fused single pass (splitter.h scanner; COUNT_SPLIT=pcre2
+        // selects the PCRE2 reference path used for differential tests).
+        return count_span(text.data(), text.size());
+    }
+    // PCRE2 reference path: specials via memchr, then count_span_pcre2.
     uint64_t total = 0;
     size_t span_start = 0;
     size_t i = 0;
     while (i < text.size()) {
-        if (text[i] == '<') {
-            size_t best_len = 0;
-            for (const auto& sp : t_->specials)
-                if (sp.size() > best_len && text.compare(i, sp.size(), sp) == 0)
-                    best_len = sp.size();
-            if (best_len) {
-                total += count_span(text.data() + span_start, i - span_start);
-                total += 1;  // the special token itself
-                i += best_len;
-                span_start = i;
-                continue;
-            }
+        const char* hit = (const char*)memchr(text.data() + i, '<', text.size() - i);
+        if (!hit) break;
+        i = (size_t)(hit - text.data());
+        size_t best_len = 0;
+        for (const auto& sp : t_->specials)
+            if (sp.size() > best_len && text.compare(i, sp.size(), sp) == 0)
+                best_len = sp.size();
+        if (best_len) {
+            total += count_span_pcre2(text.data() + span_start, i - span_start);
+            total += 1;  // the special token itself
+            i += best_len;
+            span_start = i;
+        } else {
+            ++i;
         }
-        ++i;
     }
-    total += count_span(text.data() + span_start, text.size() - span_start);
+    total += count_span_pcre2(text.data() + span_start, text.size() - span_start);
     return total;
 }
 

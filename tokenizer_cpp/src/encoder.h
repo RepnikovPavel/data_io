@@ -22,6 +22,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -46,17 +47,90 @@ struct Tables {
     ~Tables();
 };
 
-// Transparent hash/equal so the word cache can be queried with a
-// string_view without constructing a std::string (hot path).
-struct StrHash {
-    using is_transparent = void;
-    size_t operator()(std::string_view s) const {
-        return std::hash<std::string_view>{}(s);
+// Fast 64-bit hash for short byte strings (multiplicative mix over 8-byte
+// chunks). Used as the flat-cache key; hits are verified bytewise, so a hash
+// collision can never change a count.
+inline uint64_t word_hash(const char* p, size_t n) {
+    uint64_t h = 0x9E3779B97F4A7C15ull ^ n;
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        uint64_t v;
+        memcpy(&v, p + i, 8);
+        h ^= v * 0x9E3779B185EBCA87ull;
+        h = (h << 27) | (h >> 37);
+        h *= 0xC2B2AE3D27D4EB4Full;
     }
-};
-struct StrEq {
-    using is_transparent = void;
-    bool operator()(std::string_view a, std::string_view b) const { return a == b; }
+    if (i < n) {
+        uint64_t v = 0;
+        memcpy(&v, p + i, n - i);
+        h ^= v * 0x9E3779B185EBCA87ull;
+        h = (h << 27) | (h >> 37);
+    }
+    h ^= h >> 29;
+    h *= 0xBF58476D1CE4E5B9ull;
+    h ^= h >> 32;
+    return h;
+}
+
+// Flat open-addressing word -> count cache. One cache line per probe (no
+// node pointers); the word bytes are copied into a bump arena on insert and
+// hits verify bytewise. Insertions stop at 70% load (late-corpus misses just
+// run the BPE directly, which is cheap) — this bounds memory and never
+// changes counts.
+class FlatCache {
+  public:
+    explicit FlatCache(size_t cap = 1 << 21) { reset(cap); }
+
+    static constexpr uint32_t EMPTY = UINT32_MAX;
+
+    void reset(size_t cap) {
+        cap_ = cap;
+        mask_ = cap - 1;
+        slots_.assign(cap, Slot{0, 0, EMPTY, 0});
+        arena_.clear();
+        size_ = 0;
+    }
+    void clear() {
+        std::fill(slots_.begin(), slots_.end(), Slot{0, 0, EMPTY, 0});
+        arena_.clear();
+        size_ = 0;
+    }
+
+    // Returns the count, or UINT64_MAX on miss.
+    uint64_t get(std::string_view w) const {
+        uint64_t h = word_hash(w.data(), w.size());
+        size_t idx = h & mask_;
+        for (;;) {
+            const Slot& s = slots_[idx];
+            if (s.len == EMPTY) return UINT64_MAX;
+            if (s.hash == h && s.len == w.size() &&
+                memcmp(arena_.data() + s.off, w.data(), w.size()) == 0)
+                return s.count;
+            idx = (idx + 1) & mask_;
+        }
+    }
+
+    void put(std::string_view w, uint64_t count) {
+        if (size_ >= (cap_ * 7) / 10) return;  // stop inserting when 70% full
+        uint64_t h = word_hash(w.data(), w.size());
+        size_t idx = h & mask_;
+        while (slots_[idx].len != EMPTY) idx = (idx + 1) & mask_;
+        uint32_t off = (uint32_t)arena_.size();
+        arena_.insert(arena_.end(), w.begin(), w.end());
+        slots_[idx] = Slot{h, off, (uint32_t)w.size(), count};
+        ++size_;
+    }
+
+  private:
+    struct Slot {
+        uint64_t hash;
+        uint32_t off;
+        uint32_t len;
+        uint64_t count;
+    };
+    std::vector<Slot> slots_;
+    std::vector<char> arena_;
+    size_t cap_ = 0, mask_ = 0, size_ = 0;
 };
 
 class Encoder {
@@ -81,11 +155,13 @@ class Encoder {
 
   private:    std::shared_ptr<Tables> t_;
     void* md_ = nullptr;  // per-Encoder PCRE2 match data (thread-local state)
-    std::unordered_map<std::string, uint64_t, StrHash, StrEq> cache_;  // word -> tokens
+    FlatCache cache_;     // word bytes -> tokens
     std::vector<uint16_t> scratch_;  // reusable token buffer for count_word
 
-    uint64_t count_word(std::string_view word);        // steps 3-4 for one word
-    uint64_t count_span(const char* data, size_t len); // steps 2-4 for a span
+    uint64_t count_word(std::string_view word);  // byte map + merges for one word
+    uint64_t count_span(const char* data, size_t len);  // scanner path (fused)
+    uint64_t count_span_fused(const char* data, size_t len, bool nfc_done);
+    uint64_t count_span_pcre2(const char* data, size_t len);  // PCRE2 reference path
 };
 
 }  // namespace encoder

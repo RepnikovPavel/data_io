@@ -6,9 +6,12 @@ streams each file and writes a .tokbin mirror under <out_root> preserving
 relative paths (extension replaced with .tokbin). instruction and response
 are separate docs; NO truncation, NO sampling limits — the full corpus.
 
-.tokbin format (little-endian):
-  u32 magic "TKB1" (0x314B4254), u64 n_docs, u64 src_size, u64 src_mtime_ns,
-  then n_docs x { u32 len, u8 bytes[len] }.
+.tokbin format (little-endian), version 2 ("TKB2"):
+  u32 magic "TKB2" (0x324B4254), u64 n_docs, u64 src_size, u64 src_mtime_ns,
+  then n_docs docs of raw UTF-8 bytes concatenated, then u32 lens[n_docs] at
+  the END of the file (lens at the tail lets the reader mmap and scan batch
+  boundaries without touching the data pages — the old interleaved
+  len+data v1 layout forced a serial page-fault walk of every data page).
 
 Parallel over files (ProcessPoolExecutor), tqdm progress, and skips outputs
 whose recorded source size+mtime still match (resumable).
@@ -28,7 +31,7 @@ import struct
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-TOKBIN_MAGIC = 0x314B4254  # "TKB1"
+TOKBIN_MAGIC = 0x324B4254  # "TKB2"
 HEADER = struct.Struct("<IQQQ")  # magic, n_docs, src_size, src_mtime_ns
 
 
@@ -40,8 +43,8 @@ def write_tokbin(src_path, out_path, kind):
     n_docs = 0
     with open(tmp, "wb") as out:
         out.write(HEADER.pack(TOKBIN_MAGIC, 0, 0, 0))  # patched at close
+        lens = []  # u32 per doc; written at the END of the file
         buf = bytearray()
-        pack = struct.Struct("<I").pack
 
         def flush():
             if buf:
@@ -51,7 +54,7 @@ def write_tokbin(src_path, out_path, kind):
         def emit(s):
             nonlocal n_docs, buf
             b = s.encode("utf-8") if s else b""
-            buf += pack(len(b))
+            lens.append(len(b))
             buf += b
             n_docs += 1
             if len(buf) >= 1 << 24:
@@ -75,6 +78,10 @@ def write_tokbin(src_path, out_path, kind):
                     emit(a)
                     emit(b)
         flush()
+        # lens array goes at the END of the file (see format docs above)
+        import numpy as np
+
+        out.write(np.asarray(lens, dtype="<u4").tobytes())
 
     st = os.stat(src_path)
     with open(tmp, "r+b") as out:  # patch header with real values

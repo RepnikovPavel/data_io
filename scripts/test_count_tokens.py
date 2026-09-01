@@ -19,7 +19,7 @@ import random
 import struct
 import sys
 
-TOKBIN_MAGIC = 0x314B4254
+TOKBIN_MAGIC = 0x324B4254  # "TKB2": data concatenated, lens array at EOF
 HEADER = struct.Struct("<IQQQ")
 
 EDGE_CASES = [
@@ -41,12 +41,14 @@ EDGE_CASES = [
 
 
 def write_tokbin(path, docs):
+    lens = []
     with open(path, "wb") as f:
         f.write(HEADER.pack(TOKBIN_MAGIC, len(docs), 0, 0))
         for d in docs:
             b = d.encode("utf-8")
-            f.write(struct.pack("<I", len(b)))
+            lens.append(len(b))
             f.write(b)
+        f.write(struct.pack(f"<{len(lens)}I", *lens))
 
 
 def sample_docs(data_path, n_rows):
@@ -77,13 +79,15 @@ def main():
 
     if args.check:
         tokbin, cpp_path = args.check
-        with open(tokbin, "rb") as f:
-            magic, n_docs, _, _ = HEADER.unpack(f.read(HEADER.size))
-            assert magic == TOKBIN_MAGIC
-            docs = []
-            for _ in range(n_docs):
-                (ln,) = struct.unpack("<I", f.read(4))
-                docs.append(f.read(ln).decode("utf-8"))
+        raw = open(tokbin, "rb").read()
+        magic, n_docs, _, _ = HEADER.unpack(raw[: HEADER.size])
+        assert magic == TOKBIN_MAGIC
+        lens = struct.unpack(f"<{n_docs}I", raw[len(raw) - 4 * n_docs :])
+        docs = []
+        pos = HEADER.size
+        for ln in lens:
+            docs.append(raw[pos : pos + ln].decode("utf-8"))
+            pos += ln
         cpp_counts = [int(x) for x in open(cpp_path).read().split()]
         assert len(cpp_counts) == n_docs, (len(cpp_counts), n_docs)
 

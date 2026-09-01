@@ -28,6 +28,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -42,8 +43,32 @@
 
 namespace {
 
-constexpr uint32_t TOKBIN_MAGIC = 0x314b4254;  // "TKB1" little-endian
-constexpr size_t BATCH_TARGET_BYTES = 64ull << 20;  // ~64 MiB of text per batch
+// TEMP profiling hook (COUNT_ABLATE=io): batch walk only, no encode.
+inline bool io_ablate() {
+    static bool v = [] {
+        const char* e = getenv("COUNT_ABLATE");
+        return e && std::string(e) == "io";
+    }();
+    return v;
+}
+
+// TEMP: COUNT_READMODE=serial forces the single-threaded pread (A/B test).
+inline bool serial_read() {
+    static bool v = [] {
+        const char* e = getenv("COUNT_READMODE");
+        return e && std::string(e) == "serial";
+    }();
+    return v;
+}
+
+// TEMP: per-batch phase timing (COUNT_PROF_PHASES=1).
+inline bool prof_phases() {
+    static bool v = getenv("COUNT_PROF_PHASES") != nullptr;
+    return v;
+}
+
+constexpr uint32_t TOKBIN_MAGIC = 0x324b4254;  // "TKB2" little-endian
+constexpr size_t BATCH_TARGET_BYTES = 256ull << 20;  // ~256 MiB of text per batch
 constexpr size_t BATCH_MAX_DOCS = 1 << 18;
 
 struct Progress {
@@ -52,6 +77,9 @@ struct Progress {
     std::atomic<uint64_t> files_done{0};
     std::atomic<uint64_t> total_files{0};
     std::atomic<bool> stop{false};
+    // TEMP profiling: per-batch phase timing (COUNT_PROF_PHASES=1)
+    std::atomic<uint64_t> walk_ns{0};
+    std::atomic<uint64_t> compute_ns{0};
 };
 
 void progress_thread(Progress* p, std::chrono::steady_clock::time_point t0) {
@@ -69,61 +97,91 @@ void progress_thread(Progress* p, std::chrono::steady_clock::time_point t0) {
     }
 }
 
-// Process one .tokbin file: mmap it (zero-copy), walk docs in batches,
-// count each batch in parallel, return (docs, tokens).
+// Process one .tokbin file: pread it in BATCH_TARGET_BYTES chunks into a
+// reused buffer (no mmap page faults, no munmap TLB storms), count each batch
+// in parallel, return (docs, tokens).
 // If per_doc is set, print one count per line per doc (self-test mode).
 std::pair<uint64_t, uint64_t> count_file(const std::string& path,
-                                         const encoder::Encoder& proto, unsigned nthreads,
+                                         std::vector<encoder::Encoder>& encs,
+                                         std::vector<char>& buf,  // reused I/O buffer
                                          Progress& prog, bool per_doc = false) {
+    const unsigned nthreads = (unsigned)encs.size();
     int fd = open(path.c_str(), O_RDONLY);
     if (fd < 0) throw std::runtime_error("cannot open " + path);
     struct stat st;
     if (fstat(fd, &st) != 0) throw std::runtime_error("cannot stat " + path);
     size_t fsize = (size_t)st.st_size;
-    const char* base = (const char*)mmap(nullptr, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
-    if (base == MAP_FAILED) throw std::runtime_error("mmap failed: " + path);
-    madvise((void*)base, fsize, MADV_WILLNEED);  // prefetch; harmless if ignored
 
-    auto rd = [&](size_t off) -> uint64_t {
-        uint64_t v;
-        memcpy(&v, base + off, sizeof v);
-        return v;
+    auto pread_exact = [&](void* dst, size_t n, off_t off) {
+        char* p = (char*)dst;
+        size_t got = 0;
+        while (got < n) {
+            ssize_t r = pread(fd, p + got, n - got, off + (off_t)got);
+            if (r <= 0) throw std::runtime_error("short read: " + path);
+            got += (size_t)r;
+        }
     };
     uint32_t magic;
-    memcpy(&magic, base, 4);
+    pread_exact(&magic, 4, 0);
     if (magic != TOKBIN_MAGIC) throw std::runtime_error("bad magic: " + path);
-    uint64_t n_docs = rd(4);
+    uint64_t n_docs;
+    pread_exact(&n_docs, 8, 4);
     uint64_t docs_left = n_docs;
-    size_t pos = 4 + 8 + 8 + 8;  // magic + n_docs + src_size + src_mtime
-
-    // Per-thread encoders (share read-only tables, own word cache).
-    std::vector<encoder::Encoder> encs;
-    for (unsigned t = 0; t < nthreads; ++t) encs.push_back(proto.clone_shallow());
+    // TKB2: doc bytes concatenated from offset 28; u32 lens array at EOF.
+    // The lens array is small (4 B/doc) — read it fully; batch boundaries are
+    // then computed without touching data pages.
+    std::vector<uint32_t> lens(n_docs);
+    pread_exact(lens.data(), 4 * n_docs, (off_t)(fsize - 4 * n_docs));
 
     uint64_t file_tokens = 0;
     const bool dump_splits = getenv("COUNT_DUMP_SPLITS") != nullptr;
+    size_t data_pos = 28;       // file offset of the current doc's bytes
+    uint64_t doc_idx = 0;       // global index of the current doc
     while (docs_left > 0) {
-        // Walk one batch: up to BATCH_MAX_DOCS docs / BATCH_TARGET_BYTES
-        // bytes; docs are (offset, len) into the mapped file — zero copy.
-        std::vector<std::pair<uint64_t, uint32_t>> docs;
-        docs.reserve(std::min<uint64_t>(docs_left, BATCH_MAX_DOCS));
-        size_t batch_bytes = 0;
+        // Batch: up to BATCH_MAX_DOCS docs / buf.size() bytes of data.
+        auto tw0 = std::chrono::steady_clock::now();
         uint64_t batch_docs = 0;
-        while (docs_left > 0 && batch_docs < BATCH_MAX_DOCS && batch_bytes < BATCH_TARGET_BYTES) {
-            uint32_t len;
-            memcpy(&len, base + pos, 4);
-            pos += 4;
-            docs.emplace_back(pos, len);
-            pos += len;
-            batch_bytes += 4 + len;
+        size_t batch_bytes = 0;
+        uint64_t start_idx = doc_idx;
+        size_t batch_file_off = data_pos;
+        // Peek the next doc's length so batch_bytes can never exceed buf.
+        while (docs_left > 0 && batch_docs < BATCH_MAX_DOCS &&
+               batch_bytes + lens[doc_idx] <= buf.size()) {
+            batch_bytes += lens[doc_idx];
             ++batch_docs;
             --docs_left;
+            ++doc_idx;
         }
+        // A single doc larger than the buffer: grow the buffer (never happens
+        // with the 10k-char corpus docs, but stay robust).
+        if (batch_docs == 0 && docs_left > 0) buf.resize(lens[doc_idx]);
+        // Load the batch's data bytes: each worker preads its own
+        // byte-balanced slice (parallel I/O — no serial copy phase).
+        if (batch_bytes > buf.size()) throw std::runtime_error("batch overflow (doc larger than buffer?)");
+        if (serial_read()) pread_exact(buf.data(), batch_bytes, (off_t)batch_file_off);
+        data_pos += batch_bytes;
+        if (prof_phases())
+            prog.walk_ns.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                       std::chrono::steady_clock::now() - tw0)
+                                       .count());
         prog.docs.fetch_add(batch_docs);
         prog.bytes.fetch_add(batch_bytes);
 
+        // Per-doc offsets within the batch buffer.
+        std::vector<std::pair<uint64_t, uint32_t>> docs;  // (offset, len)
+        docs.reserve(batch_docs);
+        {
+            size_t off = 0;
+            for (uint64_t i = start_idx; i < start_idx + batch_docs; ++i) {
+                docs.emplace_back(off, lens[i]);
+                off += lens[i];
+            }
+        }
+        const char* base = buf.data();
+
         if (per_doc || dump_splits) {
-            // Self-test/debug mode: sequential, deterministic.
+            // Self-test/debug mode: sequential, deterministic. Read whole batch first.
+            pread_exact(buf.data(), batch_bytes, (off_t)batch_file_off);
             uint64_t sum = 0;
             for (auto& [off, len] : docs) {
                 if (dump_splits) {
@@ -138,27 +196,68 @@ std::pair<uint64_t, uint64_t> count_file(const std::string& path,
             continue;
         }
 
-        // Split the batch into per-thread doc ranges; count in parallel.
+        // Byte-balanced doc ranges, one per thread.
+        std::vector<size_t> range_lo(nthreads + 1, 0);
+        {
+            size_t d = 0;
+            for (unsigned t = 1; t <= nthreads; ++t) {
+                size_t target = batch_bytes * t / nthreads;
+                while (d < docs.size() && docs[d].first + docs[d].second <= target) ++d;
+                range_lo[t] = d;
+            }
+            range_lo[nthreads] = docs.size();
+        }
+
+        // Split the batch into per-thread doc ranges; each worker preads its
+        // slice, then counts its docs. Parallel I/O + compute, one spawn round.
+        auto tc0 = std::chrono::steady_clock::now();
         std::vector<uint64_t> partial(nthreads, 0);
+        std::exception_ptr worker_err;
+        std::mutex err_mu;
         {
             std::vector<std::thread> pool;
-            size_t chunk = (docs.size() + nthreads - 1) / nthreads;
             for (unsigned t = 0; t < nthreads; ++t) {
-                size_t lo = t * chunk, hi = std::min(docs.size(), lo + chunk);
-                if (lo >= hi) break;
+                size_t lo = range_lo[t], hi = range_lo[t + 1];
+                if (lo >= hi) continue;
                 pool.emplace_back([&, t, lo, hi] {
+                    try {
+                    if (!serial_read()) {
+                        size_t byte_lo = docs[lo].first;
+                        size_t byte_hi = docs[hi - 1].first + docs[hi - 1].second;
+                        // pread own slice
+                        char* p = buf.data() + byte_lo;
+                        size_t got = 0, want = byte_hi - byte_lo;
+                        while (got < want) {
+                            ssize_t r = pread(fd, p + got, want - got,
+                                              (off_t)(batch_file_off + byte_lo + got));
+                            if (r <= 0) throw std::runtime_error("short read: " + path);
+                            got += (size_t)r;
+                        }
+                    }
                     uint64_t sum = 0;
-                    for (size_t i = lo; i < hi; ++i)
-                        sum += encs[t].encode_count(
-                            std::string_view(base + docs[i].first, docs[i].second));
+                    if (io_ablate()) {  // TEMP profiling: batch walk only, no encode
+                        for (size_t i = lo; i < hi; ++i) sum += docs[i].second;
+                    } else {
+                        for (size_t i = lo; i < hi; ++i)
+                            sum += encs[t].encode_count(
+                                std::string_view(base + docs[i].first, docs[i].second));
+                    }
                     partial[t] = sum;
+                    } catch (...) {
+                        std::lock_guard<std::mutex> lk(err_mu);
+                        if (!worker_err) worker_err = std::current_exception();
+                    }
                 });
             }
             for (auto& th : pool) th.join();
         }
+        if (worker_err) std::rethrow_exception(worker_err);
+        if (prof_phases())
+            prog.compute_ns.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                          std::chrono::steady_clock::now() - tc0)
+                                          .count());
         for (uint64_t s : partial) file_tokens += s;
     }
-    munmap((void*)base, fsize);
     close(fd);
     prog.files_done.fetch_add(1);
     return {n_docs, file_tokens};
@@ -208,13 +307,14 @@ int run_bench(const std::string& tok_path, const encoder::Encoder& proto, unsign
     madvise((void*)base, fsize, MADV_WILLNEED);
     uint64_t n_docs;
     memcpy(&n_docs, base + 4, 8);
-    size_t pos = 28;
+    // TKB2: data from offset 28, u32 lens array at EOF.
+    const char* lens_base = base + fsize - 4 * n_docs;
     std::vector<TokbinDoc> docs;
     docs.reserve(n_docs);
+    size_t pos = 28;
     for (uint64_t i = 0; i < n_docs; ++i) {
         uint32_t len;
-        memcpy(&len, base + pos, 4);
-        pos += 4;
+        memcpy(&len, lens_base + 4 * i, 4);
         docs.push_back({pos, len});
         pos += len;
     }
@@ -320,6 +420,12 @@ int main(int argc, char** argv) {
         encoder::Encoder proto(tokenizer_path);
         if (!bench_path.empty())
             return run_bench(bench_path, proto, nthreads);
+        // Per-thread encoders, persistent across files (word caches stay warm;
+        // the flat cache stops inserting at 70% load, bounding memory).
+        std::vector<encoder::Encoder> encs;
+        for (unsigned t = 0; t < nthreads; ++t) encs.push_back(proto.clone_shallow());
+        // Shared I/O buffer (reused across files).
+        std::vector<char> iobuf(BATCH_TARGET_BYTES);
         fprintf(per_doc ? stderr : stdout, "[count] tokenizer loaded from %s\n",
                 tokenizer_path.c_str());
 
@@ -342,8 +448,17 @@ int main(int argc, char** argv) {
         Progress prog;
         prog.total_files = files.size();
         const auto t0 = std::chrono::steady_clock::now();
-        std::thread monitor;
-        if (!per_doc) monitor = std::thread(progress_thread, &prog, t0);
+        // RAII: stop+join the monitor even when an exception unwinds
+        // (a joinable std::thread at scope exit would call std::terminate).
+        struct MonitorGuard {
+            Progress* p;
+            std::thread t;
+            ~MonitorGuard() {
+                p->stop.store(true);
+                if (t.joinable()) t.join();
+            }
+        } monitor{&prog, {}};
+        if (!per_doc) monitor.t = std::thread(progress_thread, &prog, t0);
 
         FILE* out = nullptr;
         if (!out_path.empty()) {
@@ -367,7 +482,7 @@ int main(int argc, char** argv) {
             std::string root0 = roots[0];
             if (rel.rfind(root0 + "/", 0) == 0) rel = rel.substr(root0.size() + 1);
             relpath_of[idx] = rel;
-            auto [n_docs, n_toks] = count_file(path, proto, nthreads, prog, per_doc);
+            auto [n_docs, n_toks] = count_file(path, encs, iobuf, prog, per_doc);
             per_dataset[dataset_key(rel)] += n_toks;
             per_dataset_docs[dataset_key(rel)] += n_docs;
             if (out)
@@ -376,7 +491,6 @@ int main(int argc, char** argv) {
         }
 
         prog.stop.store(true);
-        if (monitor.joinable()) monitor.join();
         if (out) fclose(out);
         if (per_doc) return 0;  // self-test mode: no summary on stdout
 
@@ -394,6 +508,9 @@ int main(int argc, char** argv) {
                "in %.1f min (%.2f GiB/s)\n",
                files.size(), (unsigned long long)total_docs, total_bytes / 1073741824.0,
                (unsigned long long)grand, mins, total_bytes / 1073741824.0 / (mins * 60.0));
+        if (prof_phases())
+            printf("[prof] batch-walk %.1fs, parallel-compute %.1fs\n",
+                   prog.walk_ns.load() / 1e9, prog.compute_ns.load() / 1e9);
     } catch (const std::exception& e) {
         fprintf(stderr, "error: %s\n", e.what());
         return 1;

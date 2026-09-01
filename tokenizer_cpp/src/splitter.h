@@ -111,15 +111,29 @@ inline bool ci_equal(char a, char b) {  // ASCII case-insensitive
 }
 
 // Consume a maximal run of class CLS_L starting at i; returns end offset.
-inline size_t take_letters(const char* s, size_t len, size_t i) {
+// ASCII fast loop first (the common case), UTF-8 decode only past 0x7F.
+inline size_t take_class_run(const char* s, size_t len, size_t i, Cls want) {
     size_t e = i;
     while (e < len) {
-        size_t adv;
-        uint32_t cp = decode(s, len, e, adv);
-        if (classify(cp) != CLS_L) break;
-        e += adv;
+        uint8_t b = (uint8_t)s[e];
+        if (b < 128) {
+            uint8_t t = ascii_class(b);
+            Cls c = (t & 1) ? CLS_L : (t & 2) ? CLS_N : (t & 4) ? CLS_WS : CLS_OTHER;
+            if (c != want) break;
+            ++e;
+        } else {
+            size_t adv;
+            uint32_t cp = decode(s, len, e, adv);
+            if (classify(cp) != want) break;
+            e += adv;
+        }
     }
     return e;
+}
+
+// Consume a maximal run of class CLS_L starting at i; returns end offset.
+inline size_t take_letters(const char* s, size_t len, size_t i) {
+    return take_class_run(s, len, i, CLS_L);
 }
 
 // Returns the end offset of the match starting at i (i < len guaranteed).
@@ -178,13 +192,7 @@ inline size_t match_at(const char* s, size_t len, size_t i) {
     {
         size_t j = i;
         if (j < len && s[j] == ' ') ++j;
-        size_t e = j;
-        while (e < len) {
-            size_t adv;
-            uint32_t cp = decode(s, len, e, adv);
-            if (classify(cp) != CLS_OTHER) break;
-            e += adv;
-        }
+        size_t e = take_class_run(s, len, j, CLS_OTHER);
         if (e > j) {
             while (e < len && (s[e] == '\r' || s[e] == '\n')) ++e;
             return e;
@@ -194,13 +202,21 @@ inline size_t match_at(const char* s, size_t len, size_t i) {
 
     // A5-A7: whitespace run [i, e)
     if (c0 == CLS_WS) {
-        size_t e = i, last = i;  // last = start offset of the final whitespace char
+        size_t last = i;  // start offset of the final whitespace char
+        size_t e = i;
         while (e < len) {
-            size_t adv;
-            uint32_t cp = decode(s, len, e, adv);
-            if (classify(cp) != CLS_WS) break;
-            last = e;
-            e += adv;
+            uint8_t b = (uint8_t)s[e];
+            if (b < 128) {
+                if (!(ascii_class(b) & 4)) break;
+                last = e;
+                ++e;
+            } else {
+                size_t adv;
+                uint32_t cp = decode(s, len, e, adv);
+                if (classify(cp) != CLS_WS) break;
+                last = e;
+                e += adv;
+            }
         }
         // A5: \s*[\r\n]+ — greedy \s* backtracks to the LAST \r/\n in the run;
         // [\r\n]+ then covers just that char (the rest of the run after it is
