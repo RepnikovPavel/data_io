@@ -27,6 +27,10 @@ Why the transform exists: the raw datasets are heterogeneous (HF datasets, JSON 
 
 Token counts per dataset (instruction+response, full corpus, no truncation/sampling): [token_counts.md](token_counts.md).
 
+![Token distribution per domain](../../assets/domain_token_distribution.png)
+
+*Tokens per domain (log scale), sorted by descending token count — rendered from `token_counts.json` by `scripts/plot_domain_tokens.sh`.*
+
 | dataset | created | domain | source | condition tags | rows | tokens | doc |
 |---|---|---|---|---|---|---|---|
 | gsm8k_train | 2021-10 | math word problems | HF `openai/gsm8k` (config `main`, split `train`) | `direct` | 7,473 | 509,350 | [gsm8k_train.md](gsm8k_train.md) |

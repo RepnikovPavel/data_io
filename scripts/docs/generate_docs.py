@@ -2045,6 +2045,13 @@ def render_readme(generated):
                      "corpus, no truncation/sampling): "
                      "[token_counts.md](token_counts.md).")
         lines.append("")
+        lines.append("![Token distribution per domain]"
+                     "(../../assets/domain_token_distribution.png)")
+        lines.append("")
+        lines.append("*Tokens per domain (log scale), sorted by descending "
+                     "token count — rendered from `token_counts.json` by "
+                     "`scripts/plot_domain_tokens.sh`.*")
+        lines.append("")
     if token_counts:
         lines.append("| dataset | created | domain | source | condition tags | rows | tokens | doc |")
         lines.append("|---|---|---|---|---|---|---|---|")

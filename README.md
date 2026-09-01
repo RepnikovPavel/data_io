@@ -18,6 +18,10 @@ The pipeline consists of four main stages:
 3. **Tokenization**: Convert text to token IDs using a Rust-based high-performance tokenizer
 4. **Stratified Sampling**: Create balanced training datasets with configurable sampling strategies
 
+Token distribution across the domains of the cleaned corpus (176.1B tokens total; per-dataset details in [scripts/docs/README.md](./scripts/docs/README.md)):
+
+![](./assets/domain_token_distribution.png)
+
 ### Directory Structure
 
 ```

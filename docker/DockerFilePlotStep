@@ -1,0 +1,10 @@
+FROM python:3.12-slim
+
+# Only what scripts/plot_domain_tokens.py needs
+# (scripts/docs/generate_docs.py is imported for the domain mapping and uses
+# stdlib-only at import time).
+RUN pip install --no-cache-dir matplotlib
+
+ENV MPLCONFIGDIR=/tmp/matplotlib
+
+WORKDIR /workspace

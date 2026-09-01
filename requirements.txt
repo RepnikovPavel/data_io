@@ -1,5 +1,6 @@
 datasets
 huggingface_hub
+matplotlib
 numpy
 omegaconf
 orjson
