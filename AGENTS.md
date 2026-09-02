@@ -19,16 +19,21 @@ ocrc parse https://arxiv.org/pdf/<id> --out /tmp/ocrc_out > result.tsv 2> log.tx
   deduplicates by content hash — re-parsing the same document is a cache hit.
 - **Stream discipline**: with exactly one input and piped stdout, the zip
   bundle goes to stdout and `--out` is **ignored**; never combine
-  `> file 2>&1` (the tool refuses). Redirect stdout and stderr to separate
-  files as above, or pass `--quiet`. If a run streamed the bundle instead of
-  extracting, re-fetch it by content hash:
-  `curl -sS "http://127.0.0.1:8601/api/v1/documents/<sha256>/bundle?prompt_mode=prompt_layout_all_en" -o out.zip`.
-- **Failure modes seen**: the engine persistently fails some PDFs
-  (`parsing error`, retry-identical — e.g. DeepSeek-R1 2501.12948 and the
-  Llama 3 paper both fail, even page-limited); arXiv downloads occasionally
-  time out on SSL — retry with `curl --retry` to a local file and parse that.
-  `ocrc` exits non-zero on the first failed document, so batch loops need
-  per-document retries, not one multi-arg call.
+  `> file 2>&1` (the tool refuses). Redirect stdout to a `.zip` and unpack
+  it (`unzip -d <dir> out.zip`), or pass `--quiet` and keep stdout on a TTY.
+- **Failure modes seen**: arXiv downloads occasionally fail on flaky DNS —
+  retry with `curl --retry 3 --retry-all-errors` to a local PDF and parse the
+  file. `ocrc` exits non-zero on the first failed document, so batch loops
+  need per-document retries, not one multi-arg call. (Historical: pages whose
+  embedded images exceed 30M px were rejected by a false-positive guard —
+  DeepSeek-R1 died at page 16, Llama 3 at page 2; fixed upstream in
+  RepnikovPavel/ocr PR #17, all papers now parse as single full-document
+  tasks.)
+- **`--split N`** fans one document across N page-range tasks and merges the
+  bundles. Works as a workaround for per-task engine crashes, but verify the
+  merge: a chunk collision once produced a `document.md` with pages 11–21
+  replaced by a duplicate of pages 22–32. After any parse, check
+  `meta.json.pages_done` against the set of `layout/*page_N.json` files.
 - Other commands: `ocrc queue`, `ocrc watch`, `ocrc search "<text>"`
   (full-text over everything ever parsed), `ocrc stats`.
 - Long papers take minutes; run parses as background tasks and poll the

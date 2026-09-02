@@ -9,41 +9,46 @@ Analysis from code only; nothing here was executed.
 
 ## Research log — commands and sources used
 
-Paper parsing (ocrc → local dots.mocr service, markdown + layout JSON per
-page; see `AGENTS.md`):
+Paper parsing (ocrc → local dots.mocr service, markdown + per-page layout
+JSON; see `AGENTS.md`). Final working scheme: download PDFs locally first
+(shell DNS to arxiv.org is flaky), then parse the local file. When stdout is
+piped, ocrc streams the result bundle (.zip) to stdout and ignores `--out`,
+so redirect stdout to a zip file and unpack it:
 
 ```bash
-# DeepSeek-V4 (single input + piped stdout streams the zip to stdout,
-# so the bundle was unpacked manually from result_2606.tsv)
-ocrc parse https://arxiv.org/pdf/2606.19348 --out /tmp/ocrc_papers \
-  > /tmp/ocrc_papers/result_2606.tsv 2> /tmp/ocrc_papers/log_2606.txt
-
-# batch with per-paper retries (DeepSeek-V3, R1, Qwen2.5, Qwen3, Kimi K2,
-# Kimi k1.5, GLM-4.5, Llama 3)
-for id in 2501.12948 2412.15115 2505.09388 2507.20534 2501.12599 \
-          2508.06471 2407.21783; do
-  for attempt in 1 2 3; do
-    ocrc parse "https://arxiv.org/pdf/$id" --out /tmp/ocrc_papers \
-      > "/tmp/ocrc_papers/result_$id.tsv" 2> "/tmp/ocrc_papers/log_$id.txt" \
-      && break
+mkdir -p /tmp/ocrc_md/pdf && cd /tmp/ocrc_md/pdf
+for spec in "deepseek_v3 2412.19437" "deepseek_r1 2501.12948" \
+            "qwen25 2412.15115" "qwen3 2505.09388" "kimi_k2 2507.20534" \
+            "kimi_k15 2501.12599" "glm45 2508.06471" "llama3 2407.21783"; do
+  set -- $spec
+  for attempt in 1 2 3 4 5; do   # DNS is flaky -> retry
+    curl -fsSL --connect-timeout 15 --retry 3 --retry-all-errors \
+      -o "$1.pdf" "https://arxiv.org/pdf/$2" && break
+    sleep 5
   done
 done
 
-# bundles re-fetched by content hash when pipe mode skipped extraction:
-curl -sS "http://127.0.0.1:8601/api/v1/documents/<sha256>/bundle?\
-prompt_mode=prompt_layout_all_en" -o out.zip && unzip -d <dir> out.zip
-
-# Llama 3: arxiv download kept timing out -> local PDF -> still fails:
-curl -sSL --retry 5 --retry-all-errors -o llama3.pdf \
-  https://arxiv.org/pdf/2407.21783
-ocrc parse llama3.pdf --out /tmp/ocrc_papers     # parsing error (engine)
-ocrc parse llama3.pdf --pages 0,1,...,25 ...     # same error
+cd /tmp/ocrc_md
+ocrc parse pdf/<name>.pdf --out <name> --quiet > <name>.zip 2> <name>.log
+unzip -o -q -d <name> <name>.zip        # pipe mode: bundle arrives via stdout
 ```
 
-Known failures: **DeepSeek-R1** (2501.12948) and **Llama 3** (2407.21783)
-crash the parsing engine (`parsing error`, persistent across retries; for
-Llama 3 even a page-limited parse fails). Their facts below therefore come
-from the HF `tokenizer_config.json` files, not the papers.
+Every parse was verified for page completeness (`meta.json.pages_done` vs the
+set of `layout/*page_N.json` files): deepseek_v4 58p, deepseek_v3 53p,
+deepseek_r1 86p, llama3 92p, qwen25 26p, qwen3 35p, kimi_k2 32p,
+kimi_k15 25p, glm45 26p — zero missing pages, zero duplicated ranges.
+
+History worth keeping (why `parsing error` was not an engine fault): an
+earlier pass had DeepSeek-R1 dying reproducibly after the 14th page of any
+task and Llama 3 failing outright. Root cause: a false-positive guard
+(`is_page_safe_to_render` in `src/dots_mocr/utils/doc_utils.py` of the ocr
+service repo) rejected pages whose *embedded* images exceed 30M pixels — but
+MuPDF rasterizes at the matrix-bounded page size and never decodes the
+embedded image at native resolution (measured: R1 PDF p.16 with an embedded
+11881×7646 = 91M px image renders in 0.07 s at 70 MB peak RSS). Fixed
+upstream in RepnikovPavel/ocr PR #17 ("render pages with oversized embedded
+images instead of rejecting them"); after the fix all nine papers parsed as
+single full-document tasks with no `--split` and no errors.
 
 Tokenizer-config fact-checks (raw HF files):
 
@@ -587,58 +592,76 @@ anyway.
 
 ## 10. Cross-vendor survey: how the majors handle tokenizers and special tokens
 
-Sources: the parsed papers listed in the research log (page cites are the
-arXiv PDF pages) plus the raw `tokenizer_config.json` files linked there.
-HF config facts are stated without page numbers — the config *is* the source.
+Sources: the nine parsed papers listed in the research log (page cites are
+arXiv PDF pages, 1-based) plus the raw `tokenizer_config.json` files linked
+there. HF config facts are stated without page numbers — the config *is* the
+source. "Not in the paper" below means: verified absent from the full parsed
+text, not "didn't check".
 
 ### DeepSeek (V3, R1, V4)
 
-- Byte-level BPE, 128K vocab; the pretokenizer was retuned for multilingual
-  compression and introduces merged punctuation+line-break tokens; to fight
-  the resulting token-boundary bias they randomly split a share of those
-  merged tokens during training (DeepSeek-V3, §4.1, PDF p. 22).
-- V4 keeps the V3 tokenizer and 128K vocab, adding only "a few special
-  tokens for context construction" (DeepSeek-V4, §4.1, p. 24).
+- BBPE, 128K vocab; the pretokenizer "introduces tokens that combine
+  punctuations and line breaks"; to fight the resulting token-boundary bias
+  they "randomly split a certain proportion of such combined tokens during
+  training" (DeepSeek-V3, §4.1, PDF p. 22).
+- FIM is part of pretraining: PSM framework, sequence layout
+  `<|fim_begin|>f_pre<|fim_hole|>f_suf<|fim_end|>f_middle<|eos_token|>`,
+  applied at rate 0.1 (DeepSeek-V3, §4.1, PDF p. 22; underscores were
+  backslash-escaped by the markdown export, spellings are literal).
+- Packing: V3 packs documents "but do[es] not incorporate cross-sample
+  attention masking" (§4.1, PDF p. 22); V4 packs too and *adds* sample-level
+  attention masking (DeepSeek-V4, §4.1, PDF p. 24).
+- V4 keeps the V3 tokenizer at 128K, adding only "a few special tokens for
+  context construction" (DeepSeek-V4, §4.1, PDF p. 24).
 - BOS `<｜begin▁of▁sentence｜>`, EOS `<｜end▁of▁sentence｜>`, pad = EOS; chat
   roles `<｜User｜>` / `<｜Assistant｜>` (HF: DeepSeek-V3
-  tokenizer_config.json).
-- R1's chat template ends the assistant turn with EOS and prefills
-  generation with `<｜Assistant｜><think>\n`; in R1 the think tags are
+  tokenizer_config.json). Neither paper prints these literals — config-only
+  facts.
+- R1 (paper): the R1-Zero RL template defines `<think>...</think>` and
+  `<answer>...</answer>` as **plain-text tags**, and the format reward
+  enforces only the think tags (DeepSeek-R1, Table 1 PDF p. 3, §2.2 PDF
+  p. 4). The R1 paper contains zero tokenizer documentation (verified).
+- R1's HF chat template ends the assistant turn with EOS and prefills
+  generation with `<｜Assistant｜><think>\n` — in R1 the think tags are
   literal template text (HF: DeepSeek-R1 tokenizer_config.json).
-- V4 makes `<think></think>` a *dedicated* tag pair (DeepSeek-V4, §5.1.1,
-  pp. 28–31) and adds a `|DSML|` special token for an XML-based tool-call
-  schema (ibid., Table 4).
-- **Quick Instruction** (DeepSeek-V4, §5.1.1, Table 5, ~p. 30): dedicated
+- V4 makes `<think></think>` a *dedicated* tag pair demarcating reasoning
+  modes (DeepSeek-V4, §5.1.1, Table 2, PDF p. 29) and adds a DSML special
+  token with an XML-based tool-call schema — `<|DSML|tool_calls>`,
+  `<|DSML|invoke ...>`, `<|DSML|parameter ...>` (ibid., Table 4, PDF p. 30;
+  the prose OCRs the token as `|DSML|`, the table shows the `<|DSML|...>`
+  form).
+- **Quick Instruction** (DeepSeek-V4, §5.1.1, Table 5, PDF p. 32): dedicated
   special tokens (`<|action|>`, `<|title|>`, `<|query|>`, `<|authority|>`,
-  `<|domain|>`, `<|extracted_url|>`, `<|read_url|>`) appended to the input
-  to trigger auxiliary tasks (search-trigger decision, title/query
-  generation, domain classification) while reusing the KV cache. Note the
-  division of labor: these tokens are appended by the *serving stack* per
-  request — they are not baked into every pretraining document. This is the
-  clean version of what the HRM-Text authors did dirtier with condition
-  tokens (§8.0).
+  `<|domain|>`, `<|extracted_url|>`, `<|read_url|>`) appended to the input to
+  trigger auxiliary tasks (search-trigger decision, title/query generation,
+  domain classification) while reusing the KV cache. The table's format
+  strings also reveal the role/EOS literals `<|User|>`, `<|Assistant|>`,
+  `<|end_of_sentence|>`. Note the division of labor: these tokens are
+  appended by the *serving stack* per request — they are not baked into every
+  pretraining document. This is the clean version of what the HRM-Text
+  authors did dirtier with condition tokens (§8.0).
 
 ### Qwen (Qwen2.5, Qwen3)
 
 - BBPE, 151,643 regular tokens in Qwen2.5; the control-token set was
   expanded from 3 to 22 (two of the new ones for tool calls), unifying the
   vocabulary across all Qwen2.5 sizes (Qwen2.5, §2 "Architecture &
-  Tokenizer", PDF p. 3).
+  Tokenizer", PDF p. 3). The paper never spells out BOS/EOS/PAD (verified).
 - Qwen3 keeps the same tokenizer, vocabulary 151,669 (Qwen3, §2, PDF p. 3).
-- ~151.6K vocab BBPE; **no BOS** (`bos_token: null`, `add_bos_token:
-  false`); eos = `<|im_end|>`; pad = `<|endoftext|>`; ChatML roles
-  `<|im_start|>` / `<|im_end|>` (HF: Qwen3-32B tokenizer_config.json).
+- **No BOS** (`bos_token: null`, `add_bos_token: false`); eos =
+  `<|im_end|>`; pad = `<|endoftext|>`; ChatML roles `<|im_start|>` /
+  `<|im_end|>` (HF: Qwen3-32B tokenizer_config.json).
 - Thinking/non-thinking is a **template-level** mechanism, trained in the
   Thinking Mode Fusion SFT stage: `/think` and `/no_think` flags go into the
   user query (plain text, not special tokens), and non-thinking samples keep
   an **empty think block** in the assistant response so the output format
-  stays identical across modes (Qwen3, §post-training, Table 9, PDF
-  pp. 11–12). `enable_thinking=false` in the chat template just concatenates
-  that empty think block (HF config). "Thinking budget" is bolted on at
-  inference: when the thinking length hits the budget, a fixed stop-thinking
-  instruction plus `</think>` is injected and the model answers from the
-  partial reasoning — an emergent ability, not a trained one (Qwen3, PDF
-  p. 11).
+  stays identical across modes (Qwen3, §4.3, Table 9, PDF p. 11). In
+  multi-turn dialogs the response follows the *last* flag encountered
+  (ibid.). "Thinking budget" is bolted on at inference: when the thinking
+  length hits the budget, a fixed stop-thinking instruction plus `</think>`
+  is injected and the model answers from the partial reasoning (Qwen3, §4.3,
+  PDF p. 11). RL then reinforces `<think>`/`</think>` separation as
+  format-following (§4.4, PDF p. 12).
 - `<think>`/`</think>` **are** in Qwen3's added-tokens table (ids
   151667–151668, `special: false`) — verified on the Qwen3-0.6B config (the
   Qwen3-32B config extraction blanks these entries; do not trust it). The
@@ -646,29 +669,62 @@ HF config facts are stated without page numbers — the config *is* the source.
   `enable_thinking=false` inserts an empty `<think>\n\n</think>\n\n` block
   (HF: Qwen3-0.6B tokenizer_config.json).
 
-### Kimi K2 (Moonshot)
+### Kimi (k1.5, K2; Moonshot)
 
+- The k1.5 paper contains **no** tokenizer or special-token information at
+  all (verified full-text); its only token-layout fact is SFT packing: "we
+  pack multiple training examples into each single training sequence"
+  (Kimi k1.5, §2.5.2, PDF p. 8) — no delimiters or masking described.
+- The K2 paper documents only the tool-calling token template (Appendix B,
+  PDF pp. 26–27): tool declarations as
+  `<|im_begin|>tool DECLARE<|im_middle|>...<|im_end|>`, invocations inside
+  `<|tool_call_section_begin|>...<|tool_call_section_end|>` with per-call
+  `<|tool_call_begin|>functions.{name}:{counter}<|toolArguments_begin|>{json}<|tool_call_end|>`,
+  results as `<|im_begin|>tool<|im_middle|>## Results of {call_id}...`; a
+  constrained-decoding "enforcer" keeps generations on-template.
 - tiktoken-family tokenizer, ~163.8K vocab; explicit `[BOS]` / `[EOS]` /
   `[UNK]` / `[PAD]`; role tokens `<|im_user|>`, `<|im_assistant|>`,
-  `<|im_system|>`, `<|im_middle|>`; tool-call section tokens (HF:
-  Kimi-K2-Instruct tokenizer_config.json). The K2 and k1.5 papers themselves
-  do not document the tokenizer at all — the config is the only source.
+  `<|im_system|>`, `<|im_middle|>` (HF: Kimi-K2-Instruct
+  tokenizer_config.json — the paper cites none of these).
 
 ### GLM-4.5 (Z.ai)
 
+- The paper has no tokenizer section (verified), but its SFT chapter shows
+  the chat format: an XML-tag function-call template (`<tools>...`,
+  `<tool_call>{name}\n<arg_key>...\n</arg_key><arg_value>...`, results in
+  `<tool_response>`) motivated by escaping problems, with pipe-style role
+  markers `<|assistant|>`, `<|observation|>`, `<|user|>` and literal
+  `<think>...</think>` blocks inside assistant turns (GLM-4.5, §3.1,
+  Figure 4, PDF pp. 6–7).
+- Packing policy is stated explicitly: no best-fit packing in pretraining
+  ("random truncation is a good data-augmentation strategy"), best-fit
+  packing in mid-training "to avoid truncating the reasoning process or
+  repo-level code" (GLM-4.5, §2.3, PDF p. 5). FIM "is applied to all source
+  code data" (§2.2, PDF p. 4).
 - ~151.3K vocab; eos = pad = `<|endoftext|>`; roles `<|system|>` /
   `<|user|>` / `<|assistant|>` / `<|observation|>`; a dedicated `/nothink`
   special token switches reasoning off; legacy `[MASK]`/`[gMASK]`/`[sMASK]`
-  kept (HF: GLM-4.5 tokenizer_config.json). The GLM-4.5 paper likewise does
-  not document the tokenizer.
+  kept (HF: GLM-4.5 tokenizer_config.json).
 
-### Llama 3.1 (Meta)
+### Llama 3 (Meta)
 
-- 128K BPE + 256 reserved special-token slots (ids 128000–128255); BOS
-  `<|begin_of_text|>`, EOS `<|end_of_text|>`, dedicated pad
-  `<|finetune_right_pad_id|>`; structure tokens `<|start_header_id|>` /
-  `<|end_header_id|>` / `<|eot_id|>` (HF: Meta-Llama-3.1-8B
-  tokenizer_config.json, mirror).
+- 128K vocab: "100K tokens from the tiktoken tokenizer with 28K additional
+  tokens to better support non-English languages"; compression improved from
+  3.17 to 3.94 chars/token vs Llama 2 (Llama 3, §3.2, PDF p. 7).
+- Cross-document attention masking within packed sequences is used and
+  called important mostly for long-context continued pretraining (§3.2,
+  PDF p. 6).
+- The chat protocol "uses various special header and termination tokens… to
+  indicate the source and destination of each message" — the paper never
+  prints their spellings (§4.1.1, PDF p. 16). DPO masks exactly these
+  formatting tokens out of the loss, because training on them "may lead to
+  undesired model behaviors such as tail repetition or abruptly generating
+  termination tokens" (§4.1.4, PDF p. 16).
+- HF config fills in the literals: 128K BPE + 256 reserved special-token
+  slots (ids 128000–128255); BOS `<|begin_of_text|>`, EOS
+  `<|end_of_text|>`, dedicated pad `<|finetune_right_pad_id|>`; structure
+  tokens `<|start_header_id|>` / `<|end_header_id|>` / `<|eot_id|>` (HF:
+  Meta-Llama-3.1-8B tokenizer_config.json, mirror).
 
 ### Grok-1 (xAI)
 
@@ -715,12 +771,13 @@ exactly on this converged skeleton.
    DeepSeek/Qwen/GLM pad with EOS. §8.1 keeps `<|PAD|>` separate so padding
    can never be confused with a real stop signal in the loss mask.
 4. **Think tags**: present as added tokens in Qwen3 (ids 151667–151668) and
-   a dedicated tag pair in DeepSeek-V4; R1's template treats them as literal
-   text. §8.1 makes `<|think|>`/`</think|>` real special tokens —
+   a dedicated tag pair in DeepSeek-V4 (PDF p. 29); R1-Zero introduced them
+   as plain-text template tags enforced by a format reward (R1, Table 1,
+   PDF p. 3). §8.1 makes `<|think|>`/`</think|>` real special tokens —
    atomicity guaranteed by the vocab, and corpus text cannot mint them
    (§8.0).
 5. **Aux-task tokens are a serving-layer pattern** (DeepSeek-V4 Quick
-   Instruction): appended per request by the system, never baked into the
-   pretraining stream. This is precisely why the HRM-Text authors' condition
-   tokens inside every training row are the wrong layer — and why §8.2
-   removes them from the token stream entirely.
+   Instruction, Table 5, PDF p. 32): appended per request by the system,
+   never baked into the pretraining stream. This is precisely why the
+   HRM-Text authors' condition tokens inside every training row are the
+   wrong layer — and why §8.2 removes them from the token stream entirely.
